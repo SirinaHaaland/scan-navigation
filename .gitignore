@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Local configuration
+.env
+
+# Downloaded SCAN dataset
+data/scan/
+
+# Training outputs
+checkpoints/
+runs/
+*.pt
+*.pth
+
+# Editor and OS files
+.vscode/
+.DS_Store
