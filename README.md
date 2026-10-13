@@ -192,3 +192,21 @@ Full LSTM sequence-to-sequence test passed!
 
 These tests verify tensor compatibility and model execution. Training and translation accuracy have not yet been evaluated.
 
+### LSTM training sanity check
+
+A preliminary training script is implemented in `src/train_lstm.py`.
+
+The training procedure uses cross-entropy loss for next-action prediction, ignoring `<PAD>` tokens, the Adam optimizer with a learning rate of 0.001, and gradient clipping with a maximum norm of 1.0.
+
+Before full training, the model was tested by repeatedly training on the same batch of four SCAN examples for 100 optimizer steps.
+
+Run the sanity check on the allocated GPU:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/train_lstm.py
+```
+
+The test completed successfully. Training loss decreased from 2.2004 at step 1 to 0.0797 at step 100.
+
+This verifies that the model can learn from a small batch. It does not measure generalization or performance on the official SCAN test splits.
+

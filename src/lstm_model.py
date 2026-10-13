@@ -162,7 +162,8 @@ class LSTMSeq2Seq(nn.Module): # The complete sequence-to-sequence model architec
         )
 
         # Slices the target sequences to feed all tokens except the final end token into the decoder (standard teacher forcing).
-        # We remove the final because the decoder should receive a sequence beginning with <SOS> and learn to predict the following tokens. 
+        # We remove the final token because the decoder should receive a sequence beginning with <SOS> and learn to predict the following tokens. 
+        # We don't feed the <EOS> token as an input because the model's job is to learn to stop when it reaches <EOS>, not to keep generating after it.
         # We will later compare its predictions against targets[:, 1:], which removes the first position instead.
         # Because we are using full teacher forcing, we can pass the entire shifted decoder input sequence to the LSTM in one operation. 
         # PyTorch still processes it recurrently, one time step after another internally. 
