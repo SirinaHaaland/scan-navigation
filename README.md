@@ -85,4 +85,26 @@ The initial verification produced:
 
 ### GPU and dependencies
 
-PyTorch installation and GPU verification are pending. The final dependency versions and GPU execution instructions will be documented after the environment has been tested.
+The project uses Python 3.10.22, PyTorch 2.3.1 with CUDA 11.8 support, and NumPy 1.26.4. GPU computation was successfully verified on Gorina4 using an NVIDIA Tesla P100 GPU.
+
+After activating the Conda environment, install PyTorch:
+
+```bash
+PYTHONNOUSERSITE=1 python -m pip install \
+  torch==2.3.1 \
+  --index-url https://download.pytorch.org/whl/cu118
+```
+
+`PYTHONNOUSERSITE=1` prevents Python from importing packages from the user's personal site-packages directory instead of the project environment.
+
+GPU verification was completed successfully on Gorina4 using an NVIDIA Tesla P100-PCIE-12GB GPU. PyTorch reported CUDA availability, and a matrix multiplication on the GPU completed successfully.
+
+To check GPU availability, replace `<GPU_ID>` with the physical GPU allocated to your project group:
+
+```bash
+CUDA_VISIBLE_DEVICES=<GPU_ID> PYTHONNOUSERSITE=1 python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+```
+
+GPU use must follow the course's allocation schedule and be coordinated with other groups sharing the same GPU.
+
+The project dependencies and reproducible training commands will be updated as model implementation progresses.
