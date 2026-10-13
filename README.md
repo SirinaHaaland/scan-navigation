@@ -83,6 +83,35 @@ The initial verification produced:
 - 9 output vocabulary tokens
 - A successful tokenization round-trip test
 
+### PyTorch data pipeline
+
+The project implements a PyTorch data pipeline in `src/data_loader.py`, building on the tokenization and vocabulary functions in `src/dataset.py`.
+
+The pipeline:
+
+- Converts SCAN input commands and output action sequences into integer tensors.
+- Adds `<SOS>` and `<EOS>` tokens to decoder target sequences.
+- Pads variable-length input and target sequences within each mini-batch.
+- Records original input sequence lengths for use by the LSTM encoder.
+- Uses PyTorch `Dataset` and `DataLoader` classes for batching.
+
+To verify the data pipeline from the project root:
+
+```bash
+python -s src/data_loader.py
+```
+
+The initial test using the official random-split training data produced:
+
+```text
+Dataset size: 16728
+Input batch shape: torch.Size([4, 9])
+Target batch shape: torch.Size([4, 27])
+Input lengths: [9, 6, 6, 7]
+```
+
+The data pipeline will be shared by the LSTM and Transformer models to support consistent experiments.
+
 ### GPU and dependencies
 
 The project uses Python 3.10.22, PyTorch 2.3.1 with CUDA 11.8 support, and NumPy 1.26.4. GPU computation was successfully verified on Gorina4 using an NVIDIA Tesla P100 GPU.
@@ -99,11 +128,10 @@ PYTHONNOUSERSITE=1 python -m pip install \
 
 GPU verification was completed successfully on Gorina4 using an NVIDIA Tesla P100-PCIE-12GB GPU. PyTorch reported CUDA availability, and a matrix multiplication on the GPU completed successfully.
 
-To check GPU availability, replace `<GPU_ID>` with the physical GPU allocated to your project group:
+To check GPU availability (our group is group 6 and share GPU 2 with group 5 and must coordinate GPU usage):
 
 ```bash
-CUDA_VISIBLE_DEVICES=<GPU_ID> PYTHONNOUSERSITE=1 python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
-```
+CUDA_VISIBLE_DEVICES=2 PYTHONNOUSERSITE=1 python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
 
 GPU use must follow the course's allocation schedule and be coordinated with other groups sharing the same GPU.
 
