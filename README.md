@@ -132,7 +132,33 @@ To check GPU availability (our group is group 6 and share GPU 2 with group 5 and
 
 ```bash
 CUDA_VISIBLE_DEVICES=2 PYTHONNOUSERSITE=1 python -c "import torch; print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0))"
+```
 
 GPU use must follow the course's allocation schedule and be coordinated with other groups sharing the same GPU.
 
-The project dependencies and reproducible training commands will be updated as model implementation progresses.
+### LSTM encoder
+
+The LSTM baseline includes an encoder implemented in `src/lstm_model.py`.
+
+The encoder uses a trainable embedding layer followed by a single-layer, unidirectional LSTM. Variable-length commands are processed using PyTorch's `pack_padded_sequence`, preventing padded positions from affecting the final hidden and cell states.
+
+The initial configuration uses an embedding dimension of 64 and a hidden dimension of 128.
+
+To test the encoder from the project root:
+
+```bash
+./.conda-env/bin/python -s src/lstm_model.py
+```
+
+The encoder test passed with the following output:
+
+```text
+Input shape: torch.Size([4, 9])
+Input lengths: [9, 6, 6, 7]
+Hidden state shape: torch.Size([1, 4, 128])
+Cell state shape: torch.Size([1, 4, 128])
+Encoder test passed!
+```
+
+This verifies the encoder's tensor shapes but does not evaluate its prediction accuracy or training performance.
+
