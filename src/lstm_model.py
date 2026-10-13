@@ -5,22 +5,33 @@ from torch.nn.utils.rnn import (
     pack_padded_sequence, # help handle padding correctly
 )
 
-
+# The first component is the encoder, which job is to read the input command and create a numerical representation that the decoder can use.
+# An LSTM processes a sequence while carrying information from earlier steps to later ones.
+# At each input token, an LSTM maintains two states: 
+# 1. a hidden state, which represents information available to the network at the current step
+# 2. a cell state, which provides a mechanism for retaining information across the sequence.
+# The LSTM learns how to update these states through gates. We don't need to implement the gates 
+# manually because PyTorch provides nn.LSTM.
 class LSTMEncoder(nn.Module):
     """Encoder class. Neural networks inherit from nn.Module.
     This tells PyTorch that this class contains trainable components.
     When we create an optimizer, PyTorch can find 
     the embedding and LSTM parameters automatically.
     """
-    def __init__( # The layers the model contains
+    def __init__( # The layers the model contains (3 layers)
         self,
         vocab_size,
         embedding_dim,
         hidden_dim,
         pad_id,
     ):
-        super().__init__()
+        super().__init__() # Initializes the parent nn.Module class so PyTorch can track parameters.
 
+        # The data loader produces integer token IDs.
+        # The embedding layer converts each ID into a trainable vector of numbers.
+        # The vectors initially contain randomly initialized values. During training, 
+        # the network learns embeddings that help it translate commands into actions.
+        
         self.embedding = nn.Embedding( # Layer that transforms integer token IDs into vectors
             num_embeddings=vocab_size, # How many tokens
             embedding_dim=embedding_dim, # Size of each token vector
@@ -48,6 +59,125 @@ class LSTMEncoder(nn.Module):
 
         return hidden, cell # The decoder will receive these states to initialize its own LSTM.
     
+# The next component is the LSTM decoder, which reads the entire input command (e.g. jump twice) and produces two states. 
+# The decoder will use those states to generate the action sequence, one token at a time (e.g. I_JUMP I_JUMP).
+
+# The decoder starts with those states and receives the special token <SOS> (start of sequence). Its job is to predict the first action.
+# Then it predicts the next action, continuing until it produces <EOS> (end of sequence).
+# We'll use teacher forcing during training; For jump twice, our data loader constructs: <SOS> I_JUMP I_JUMP <EOS>
+# We can divide that sequence into two parts: 
+# Decoder inputs:  <SOS>   I_JUMP  I_JUMP
+# Expected outputs: I_JUMP I_JUMP <EOS>
+# Instead of feeding the decoder its own previous prediction, we feed it the correct previous token.
+# This makes training more efficient and stable, especially at the beginning when the model's predictions are mostly random.
+# During evaluation, the model will not have access to the correct actions. It must use its own previous predictions.
+
+class LSTMDecoder(nn.Module): # The model contains three layers
+    def __init__(
+        self,
+        vocab_size,
+        embedding_dim,
+        hidden_dim,
+        pad_id,
+    ):
+        super().__init__()
+
+        self.embedding = nn.Embedding( # Converts output action IDs into vectors
+            num_embeddings=vocab_size,
+            embedding_dim=embedding_dim,
+            padding_idx=pad_id,
+        )
+
+        self.lstm = nn.LSTM( # processes the action tokens while maintaining hidden and cell states
+            input_size=embedding_dim,
+            hidden_size=hidden_dim,
+            batch_first=True,
+        )
+
+        self.output_layer = nn.Linear( # Converts the LSTM's hidden representation into scores for every possible output token.
+        # The output vocabulary has nine tokens, so with hidden_dim=128, the linear layer maps 128 values into nine scores (logits). 
+        # These are not probabilities yet. We will use PyTorch's cross-entropy loss, which handles logits directly.
+            hidden_dim, 
+            vocab_size,
+        )
+
+    def forward(self, token, hidden, cell):
+        """ Performs a single decoding step by taking the current 
+        token and previous hidden states, passing them through the 
+        LSTM layer to update the recurrent states, and projecting 
+        the output into vocabulary logits for the next token prediction.
+        We return hidden and cell states because each time the decoder 
+        predicts a token, its internal states change. We need to pass 
+        those updated states into the next prediction step so the decoder 
+        can remember what it has generated so far.
+        """
+        embedded = self.embedding(token)
+
+        output, (hidden, cell) = self.lstm(
+            embedded,
+            (hidden, cell),
+        )
+
+        logits = self.output_layer(output)
+
+        return logits, hidden, cell
+    
+# Next we connect the encoder and decoder by creating a class that contains both components.
+
+class LSTMSeq2Seq(nn.Module): # The complete sequence-to-sequence model architecture, inheriting from PyTorch's nn.Module.
+    def __init__( # Sets up the model's sub-components using the provided vocabulary sizes and dimensions.
+        self,
+        input_vocab_size,
+        output_vocab_size,
+        embedding_dim,
+        hidden_dim,
+        input_pad_id,
+        output_pad_id,
+    ):
+        super().__init__()
+
+        self.encoder = LSTMEncoder( # Encoder network responsible for processing input token sequences.
+            vocab_size=input_vocab_size,
+            embedding_dim=embedding_dim,
+            hidden_dim=hidden_dim,
+            pad_id=input_pad_id,
+        )
+
+        self.decoder = LSTMDecoder( # Decoder network responsible for generating output action sequences.
+            vocab_size=output_vocab_size,
+            embedding_dim=embedding_dim,
+            hidden_dim=hidden_dim,
+            pad_id=output_pad_id,
+        )
+
+    def forward( # Defines how data flows through the entire model during training (using teacher forcing).
+        self,
+        inputs,
+        input_lengths,
+        targets,
+    ):
+        hidden, cell = self.encoder( # Passes the input commands and their true lengths through the encoder to extract the final summary hidden and cell states.
+            inputs,
+            input_lengths,
+        )
+
+        # Slices the target sequences to feed all tokens except the final end token into the decoder (standard teacher forcing).
+        # We remove the final because the decoder should receive a sequence beginning with <SOS> and learn to predict the following tokens. 
+        # We will later compare its predictions against targets[:, 1:], which removes the first position instead.
+        # Because we are using full teacher forcing, we can pass the entire shifted decoder input sequence to the LSTM in one operation. 
+        # PyTorch still processes it recurrently, one time step after another internally. 
+        decoder_inputs = targets[:, :-1]
+
+        # Feeds the shifted target tokens and the encoder's final states into the decoder, producing raw prediction scores (logits) for every step.
+        # That is how the input command influences the generated action predictions.
+        logits, _, _ = self.decoder( 
+            decoder_inputs,
+            hidden,
+            cell,
+        )
+
+        return logits # Outputs the predicted logits so they can be compared against the actual targets using a loss function (like Cross-Entropy).
+
 if __name__ == "__main__":
     """This test creates an encoder, gives it a batch of four real SCAN commands, 
     and checks the dimensions of its output states.
@@ -119,4 +249,37 @@ if __name__ == "__main__":
 
     print("Encoder test passed!")
 
+    # Test the complete model. Verify that:
+    # The encoder accepts padded SCAN commands.
+    # The decoder receives the encoder's hidden and cell states.
+    # The decoder processes teacher-forced action sequences.    
+    # The model produces the correct number of output logits.
+
+    model = LSTMSeq2Seq(
+        input_vocab_size=len(input_vocab),
+        output_vocab_size=len(output_vocab),
+        embedding_dim=64,
+        hidden_dim=128,
+        input_pad_id=input_vocab["<PAD>"],
+        output_pad_id=output_vocab["<PAD>"],
+    )
+
+    logits = model(
+        inputs,
+        lengths,
+        targets,
+    )
+
+    expected_shape = (
+        inputs.size(0),
+        targets.size(1) - 1,
+        len(output_vocab),
+    )
     
+    # Below: the model produces nine possible token scores at each of 26 positions for each of four commands.
+    print("Model output shape:", logits.shape) # torch.Size([4, 26, 9]) --> 4 examples × 26 prediction positions × 9 output-token scores
+    print("Expected output shape:", expected_shape) # (4, 26, 9) The output is a three-dimensional tensor. This is what we need for training.
+
+    assert logits.shape == expected_shape # Passed
+
+    print("Full LSTM sequence-to-sequence test passed!")

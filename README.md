@@ -162,3 +162,33 @@ Encoder test passed!
 
 This verifies the encoder's tensor shapes but does not evaluate its prediction accuracy or training performance.
 
+### LSTM decoder and sequence-to-sequence model
+
+The LSTM baseline is implemented in `src/lstm_model.py` and consists of an encoder and decoder.
+
+The decoder uses an embedding layer, a single-layer LSTM, and a linear output projection to produce logits over the output action vocabulary. Its initial hidden and cell states are supplied by the encoder.
+
+During training, the model uses full teacher forcing: the decoder receives the ground-truth output sequence shifted by one position. Its predictions are intended to be compared against the corresponding next tokens.
+
+The initial architecture uses:
+
+- Embedding dimension: 64
+- Hidden dimension: 128
+- Single-layer, unidirectional encoder and decoder
+- No attention mechanism
+
+The forward-pass test was successful:
+
+```text
+Input shape: torch.Size([4, 9])
+Input lengths: [9, 6, 6, 7]
+Hidden state shape: torch.Size([1, 4, 128])
+Cell state shape: torch.Size([1, 4, 128])
+Encoder test passed!
+Model output shape: torch.Size([4, 26, 9])
+Expected output shape: (4, 26, 9)
+Full LSTM sequence-to-sequence test passed!
+```
+
+These tests verify tensor compatibility and model execution. Training and translation accuracy have not yet been evaluated.
+
