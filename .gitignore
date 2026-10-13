@@ -20,3 +20,6 @@ runs/
 # Editor and OS files
 .vscode/
 .DS_Store
+# Local Python environments
+.conda-env/
+.venv/
