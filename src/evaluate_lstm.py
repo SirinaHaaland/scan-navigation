@@ -1,33 +1,54 @@
 """
-The next task is to find out whether The trained LSTM saved in checkpoints/lstm_random_best.pt
-can translate navigation commands correctly without being shown the correct actions.
-This gives us our first actual SCAN accuracy result, which we will later compare against the Transformer.
-Evaluate our trained LSTM on the official SCAN random-split test set.
-TRAINING vs EVALUATION
-During training:
-    The decoder receives the correct previous action 
-    when predicting the next one (teacher forcing).
-    The model learns by updating its weights.
+Evaluate an LSTM on an official SCAN test split
+This script measures exact-match accuracy.
+It is used after training has finished.
+Examples:
+    python src/evaluate_lstm.py --split random
+    python src/evaluate_lstm.py --split length
+    python src/evaluate_lstm.py --split add_jump
 
-During evaluation:
-    Now the correct actions are supposed to be unknown to the model.
-    The decoder receives its OWN previous predicted action.
-    The model's weights do not change.
+Matching training and test splits:
+RANDOM: Train on: simple_split/tasks_train_simple.txt
+     Test on: simple_split/tasks_test_simple.txt
+Measures translation of unseen commands drawn from a similar distribution.
 
-We measure EXACT-MATCH ACCURACY:
-    A command is correct only if the entire generated action sequence
-    exactly matches the correct action sequence from SCAN.
+LENGTH: Train on: length_split/tasks_train_length.txt
+     Test on: length_split/tasks_test_length.txt
+Measures generalization from shorter training outputs to longer test outputs.
+ We load the trained length model and do not update it.
 
-For example:
-    Correct:   I_JUMP I_JUMP
-    Predicted: I_JUMP I_JUMP
-    Result:    Correct
+ADD_JUMP: Train on: add_prim_split/tasks_train_addprim_jump.txt
+      Test on: add_prim_split/tasks_test_addprim_jump.txt
+ Measures whether learned composition rules transfer to new combinations involving "jump".
 
-    Correct:   I_JUMP I_JUMP
-    Predicted: I_JUMP
-    Result:    Incorrect
+Training vs evaluation:
+For training the decoder receives the CORRECT previous action.
+This is called teacher forcing.
+For evaluation the decoder receives its own previous predicted action.
+This is called autoregressive generation.
+We use greedy decoding. At each step, select the token with the highest score.
+ We do not pass correct target actions into the decoder.
+
+Exact-match accurcy:
+A command is counted as correct only if the COMPLETE
+generated output matches the reference. Example:
+Correct: I_JUMP I_JUMP EOS
+Predicted: I_JUMP I_JUMP EOS
+Result: Correct
+
+Correct: I_JUMP I_JUMP EOS
+Predicted: I_JUMP EOS
+Result: Incorrect
+
+Generating EOS and knowing when to stop is part of generating the correct action sequence.
+
+This script never updates the model's weights.
+The official test examples are used only for final evaluation.
+We also print some incorrect predictions to help investigate
+what types of commands the model struggles with.
 """
 
+import argparse
 from pathlib import Path
 
 import torch
@@ -38,201 +59,305 @@ from data_loader import SCANDataset, collate_batch
 from lstm_model import LSTMSeq2Seq
 
 
-# A decoder needs a stopping rule.
-# Normally, generation stops when the model predicts <EOS>,
-# which means "end of sequence".
-# However, an untrained or poorly trained model might never predict EOS.
-# This limit prevents it from generating actions forever.
-# SCAN action sequences can be long, so 100 gives us enough room for
-# the official random split without allowing unlimited generation.
-MAX_OUTPUT_LENGTH = 100
+# 1. Official test files:
+# Each test file must be paired with the model trained on
+# the corresponding official training file.
+# We must not use: random-trained model + length test
+# as our official length-split result.
+# The random-trained model may have learned from examples
+# containing longer outputs.
+# For the official length experiment, the model must first
+# be trained on the length training file.
+TEST_FILES = {
+    "random": "simple_split/tasks_test_simple.txt",
+    "length": "length_split/tasks_test_length.txt",
+    "add_jump": "add_prim_split/tasks_test_addprim_jump.txt",
+}
 
-# We can evaluate several commands together instead of one at a time.
-# This makes GPU evaluation faster.
+
+# Evaluate multiple commands at once for efficiency.
 BATCH_SIZE = 64
 
-
-def generate_actions(
+# 2. Generate actions without teacher forcing:
+@torch.no_grad()
+def greedy_decode(
     model,
     inputs,
     input_lengths,
     sos_id,
     eos_id,
-    max_output_length,
+    max_steps,
 ):
     """
-    Generate action sequences WITHOUT using the correct target actions.
-    inputs:
-        The navigation commands, converted into integer token IDs.
-    input_lengths:
-        The real length of each input command, excluding padding.
-    sos_id:
-        The numerical ID of <SOS>, which tells the decoder to start.
-    eos_id:
-        The numerical ID of <EOS>, which tells the decoder to stop.
-    Returns:
-        A list containing one generated action-ID sequence per command.
-    The returned sequences do not include SOS or EOS.
+    Generate a complete action sequence for each input command.
+    This function does not receive the correct targets.
+    It receives only:
+            - The trained model
+            - Input navigation commands
+            - Their real input lengths
+            - The start/end token IDs
+            - A safety limit for generation
+
+    Generation:
+    1. Encode the navigation command.
+    2. Give the decoder SOS.
+    3. The decoder predicts one output token.
+    4. Feed that predicted token back into the decoder.
+    5. Repeat until EOS is predicted or the safety limit
+       is reached.
+    This is autoregressive decoding.
+
+    Returns a Python list of generated token-ID sequences.
+    Example:[[5, 5, 2], [4, 2],]
+    These represent two generated action sequences.
+    The numbers are token IDs, not action names.
+    
+    We keep EOS in the generated sequence if the model predicts it.
+    If the model never predicts EOS, its sequence will not contain EOS.
+    This lets us count failure to stop as an error.
     """
 
-    # This function is only used for evaluation.
-    # We do not need gradients because we are not training.
-    with torch.no_grad():
+    # The encoder reads each INPUT navigation command ONCE.
+    # Example: "jump twice"
+    # The encoder returns hidden and cell states.
+    # These states initialize the decoder and provide
+    # information about the input command.
+    hidden, cell = model.encoder(
+        inputs,
+        input_lengths,
+    )
 
-        # The encoder reads the INPUT navigation commands.
-        # For example: "jump twice"
-        # The encoder processes the command and produces hidden and
-        # cell states containing information about that command.
-        # The decoder uses these states to decide which actions to output.
-        hidden, cell = model.encoder(
-            inputs,
-            input_lengths,
+    # Number of commands in the current batch.
+    # Example: inputs.shape = (64, 9)
+    # Then: batch_size = 64
+    # The 9 is the padded input command length.
+    batch_size = inputs.size(0)
+
+    # Every decoder must begin with SOS.
+    # We create one SOS token for each command.
+    # Shape: (batch_size, 1)
+    # Example: (64, 1)
+    # The 1 means one current decoder token per command.
+    current_token = torch.full(
+        (batch_size, 1),
+        fill_value=sos_id,
+        dtype=torch.long,
+        device=inputs.device,
+    )
+
+    # One empty list per navigation command.
+    # We will append generated action-token IDs to each list.
+    generated_sequences = [
+        [] for _ in range(batch_size)
+    ]
+
+    # Track which commands have already generated EOS.
+    # Initially all are False, meaning generation is ongoing.
+    finished = torch.zeros(
+        batch_size,
+        dtype=torch.bool,
+        device=inputs.device,
+    )
+
+    # Generate at most max_steps tokens per command.
+    # Normally, generation should end when EOS is predicted.
+    # But a model might fail to predict EOS.
+    # The safety limit prevents an infinite loop.
+    for step in range(max_steps):
+
+        # Give the decoder ONE current token per command.
+        # First iteration: current_token contains SOS.
+        # Later iterations: current_token contains the model's own
+        # previous prediction.
+        # The decoder also receives its previous hidden
+        # and cell states, allowing information to carry
+        # forward between output positions.
+        logits, hidden, cell = model.decoder(
+            current_token,
+            hidden,
+            cell,
         )
 
-        # How many commands we are evaluating in this batch
-        batch_size = inputs.size(0)
+        # Logits are raw scores for every possible next output token.
+        # Example shape: (64, 1, 9)
+        # Meaning:
+        #     64 commands
+        #     1 next-action prediction per command
+        #     9 possible output tokens
+        # These are output action scores.
+        # argmax chooses the highest-scoring output token.
+        # Example: If I_JUMP has the highest score,
+        # the chosen token ID represents I_JUMP.
+        # Resulting shape: (64, 1)
+        next_token = logits.argmax(dim=-1)
 
-        # Create the first token for every decoder sequence.
-        # The decoder does not start with an action like I_JUMP.
-        # It starts with <SOS> ("start of sequence").
-        # Shape: (batch_size, 1)
-        # For a batch of 64 commands, this is 64 SOS tokens:
-        # one starting token for each command.
-        current_token = torch.full(
-            (batch_size, 1),
-            fill_value=sos_id,
-            dtype=torch.long,
-            device=inputs.device,
-        )
+        # Process each command's predicted next token.
+        for i in range(batch_size):
 
-        # Store the actions predicted for each command separately.
-        # If the batch has 64 commands, this creates 64 empty lists.
-        # Each list will gradually fill with predicted action IDs.
-        generated_sequences = [
-            [] for _ in range(batch_size)
-        ]
+            # Some commands may have generated EOS earlier
+            # than other commands in the same batch.
+            # Once a command has finished, ignore any
+            # additional predictions for that command.
+            if finished[i].item():
+                continue
 
-        # Track which commands have already generated EOS.
-        # False means the model is still generating actions.
-        # True means the model has finished that command.
-        finished = torch.zeros(
-            batch_size,
-            dtype=torch.bool,
-            device=inputs.device,
-        )
+            # Convert the selected token ID from a
+            # one-element tensor to a Python integer.
+            predicted_id = next_token[i, 0].item()
 
-        # Generate at most MAX_OUTPUT_LENGTH actions per command.
-        # We do not know the correct number of actions in advance.
-        # The model must decide when to stop by predicting EOS.
-        for _ in range(max_output_length):
+            # Save the predicted token.
+            # This includes EOS if EOS was predicted.
+            generated_sequences[i].append(predicted_id)
 
-            # Give the decoder ONE token per command.
-            # On the first iteration, this token is SOS.
-            # On later iterations, it is the decoder's own
-            # prediction from the previous iteration.
-            # The hidden and cell states carry information forward,
-            # so the decoder remembers what it has generated so far.
-            logits, hidden, cell = model.decoder(
-                current_token,
-                hidden,
-                cell,
-            )
+            # EOS means "end of sequence".
+            # Once predicted, this command is finished.
+            if predicted_id == eos_id:
+                finished[i] = True
 
-            # The decoder outputs scores for every possible output
-            # vocabulary token.
-            # For example, if the output vocabulary contains 9 tokens,
-            # each command gets 9 scores for its next action.
-            # logits shape: (batch_size, 1, 9)
-            # The 1 means we are predicting ONE new action at a time.
-            # argmax chooses the ID of the token with the highest score.
-            # This is called GREEDY DECODING.
-            next_token = logits.argmax(
-                dim=-1
-            )
+        # Stop early if all commands in the batch
+        # have already generated EOS.
+        if finished.all().item():
+            break
 
-            # next_token shape: (batch_size, 1)
-            # For each command, check the predicted next token.
-            # We do not save EOS as an action because it is only
-            # a marker indicating the end of the output sequence.
-            for i in range(batch_size):
-
-                # If this command already finished, ignore any
-                # additional predictions for it.
-                if finished[i].item():
-                    continue
-
-                predicted_id = next_token[i, 0].item()
-
-                if predicted_id == eos_id:
-                    # EOS means this command is finished.
-                    finished[i] = True
-                else:
-                    # Otherwise, save the predicted action token ID.
-                    generated_sequences[i].append(predicted_id)
-
-            # If EVERY command has predicted EOS, we can stop early.
-            if finished.all().item():
-                break
-
-            # Feed the predicted token back into the decoder.
-            # This is the key difference from teacher forcing:
-            # TRAINING:   next decoder input = correct previous action
-            # EVALUATION: next decoder input = predicted previous action
-            # The model must now continue based on its own prediction.
-            current_token = next_token
+        # Autoregressive feedback
+        # Use the model's OWN predicted tokens as its next decoder inputs.
+        # This is the key difference from training.
+        # TRAINING: Next input = correct previous action
+        # EVALUATION: Next input = predicted previous action
+        current_token = next_token
 
     return generated_sequences
 
 
+# 3. Main evaluation experiment:
 def main():
 
-    # Use the selected GPU if one is available.
+    # Read the selected split from the terminal
+    # Example:   --split length
+    # means we evaluate the saved length model
+    # using the official length test file.
+    parser = argparse.ArgumentParser(
+        description="Evaluate LSTM on an official SCAN split."
+    )
+
+    parser.add_argument(
+        "--split",
+        choices=["random", "length", "add_jump"],
+        required=True,
+        help="Choose the official SCAN test split.",
+    )
+
+    # Maximum number of generated output tokens.
+    # This includes the EOS token.
+    # We use 200 by default rather than the previous 100
+    # because the length split contains longer outputs.
+    # The script checks the longest reference sequence
+    # and raises an error if this limit is too small.
+    parser.add_argument(
+        "--max-steps",
+        type=int,
+        default=200,
+        help="Maximum generated output tokens, including EOS.",
+    )
+
+    # Number of incorrect predictions to display.
+    # Looking at mistakes is useful for understanding
+    # why a model has poor generalization.
+    parser.add_argument(
+        "--show-errors",
+        type=int,
+        default=5,
+        help="Number of incorrect translations to print.",
+    )
+
+    args = parser.parse_args()
+
+    if args.max_steps < 1:
+        parser.error("--max-steps must be at least 1.")
+
+    if args.show_errors < 0:
+        parser.error("--show-errors cannot be negative.")
+
+    # Locate the project root.
+    project_root = Path(__file__).resolve().parent.parent
+
+    # Select GPU if available.
     device = torch.device(
         "cuda" if torch.cuda.is_available() else "cpu"
     )
 
-    print("Using device:", device)
-
-    # Locate files relative to the project directory.
-    project_root = Path(__file__).resolve().parent.parent
-
+    # Select the checkpoint matching the requested split.
+    # Examples:
+    #     random -> checkpoints/lstm_random_best.pt
+    #     length -> checkpoints/lstm_length_best.pt
+    # These contain different learned weights.
     checkpoint_path = (
         project_root
         / "checkpoints"
-        / "lstm_random_best.pt"
+        / f"lstm_{args.split}_best.pt"
     )
 
+    # Select the corresponding official test file.
     test_path = (
         project_root
         / "data"
         / "scan"
-        / "simple_split"
-        / "tasks_test_simple.txt"
+        / TEST_FILES[args.split]
     )
 
-    # Load the checkpoint created by train_lstm_full.py.
-    # This contains the learned model weights and the vocabularies.
-    # weights_only=False allows loading our checkpoint dictionary,
-    # which includes Python dictionaries for the vocabularies.
-    # Only load checkpoint files that you trust.
+    if not checkpoint_path.is_file():
+        raise FileNotFoundError(
+            "Missing checkpoint. Train this split first: "
+            f"{checkpoint_path}"
+        )
+
+    if not test_path.is_file():
+        raise FileNotFoundError(
+            f"Missing official test file: {test_path}"
+        )
+
+    # Load the saved checkpoint.
+    # It contains:
+    #     - Learned model weights
+    #     - Input vocabulary
+    #     - Output vocabulary
+    #     - Model dimensions
+    #     - Training epoch
+    #
+    # map_location allows loading the checkpoint onto our selected CPU or GPU.
+    # weights_only=False is used because our checkpoint
+    # includes Python dictionaries, not only tensor weights.
     checkpoint = torch.load(
         checkpoint_path,
         map_location=device,
         weights_only=False,
     )
 
-    # Recover the EXACT same vocabularies used during training.
-    # This matters because the model works with numerical token IDs.
-    # For example, if I_JUMP was ID 5 during training, it must still
-    # be ID 5 during evaluation.
-    # Building a new vocabulary from the test set could change IDs
-    # and cause the trained model to interpret them incorrectly.
+    # Check that the checkpoint belongs to this split.
+    # The original random checkpoint may not have a
+    # "split" field, so we allow that older format.
+    if checkpoint.get("split", args.split) != args.split:
+        raise ValueError(
+            "Checkpoint split does not match requested test split."
+        )
+
+    # Recover the exact vocabularies from training.
+    # We must not rebuild vocabularies from the test data.
+    #     If I_JUMP was ID 5 during training,
+    #     it must still be ID 5 during evaluation.
     input_vocab = checkpoint["input_vocab"]
     output_vocab = checkpoint["output_vocab"]
 
-    # Recreate the model architecture with the same settings.
-    # At this point, the model is only an empty architecture with
-    # newly initialized weights.
+    # Reverse the output vocabulary so we can display
+    # predicted action names instead of numerical IDs.
+    id_to_output_token = {
+        token_id: token
+        for token, token_id in output_vocab.items()
+    }
+
+    # Recreate the same model architecture.
+    # Initially, this constructor creates new weights.
+    # We immediately replace them with the saved weights.
     model = LSTMSeq2Seq(
         input_vocab_size=len(input_vocab),
         output_vocab_size=len(output_vocab),
@@ -242,37 +367,55 @@ def main():
         output_pad_id=output_vocab["<PAD>"],
     ).to(device)
 
-    # Replace the newly initialized weights with the trained weights
-    # that were saved in the checkpoint.
+    # Restore the trained model's learned parameters.
     model.load_state_dict(
         checkpoint["model_state_dict"]
     )
 
-    # Set evaluation mode.
-    # This tells PyTorch that we are evaluating, not training.
+    # Evaluation mode.
+    # No optimizer is created.
+    # No backward() is called.
+    # No optimizer.step() is called.
+    # The model's weights remain unchanged.
     model.eval()
 
-    print(
-        "Loaded checkpoint from epoch:",
-        checkpoint["epoch"],
-    )
-
-    # Load the OFFICIAL SCAN RANDOM-SPLIT TEST DATA.
-    # We did not use these examples for training or validation.
-    # This is our first evaluation on the official test set.
+    # Load the official test examples.
+    # These examples are used only after training.
+    # Each example contains: navigation_command, correct_actions)
+    # The correct actions are used for comparison
+    # after the model has generated its predictions.
     test_examples = load_scan_file(test_path)
 
-    # SCANDataset converts commands and action sequences into IDs
-    # using the vocabularies recovered from the training checkpoint.
+    # Our existing SCANDataset does not support unknown tokens.
+    # Check whether every input token in the test data
+    # exists in the training vocabulary.
+    # This check prevents a confusing KeyError later.
+    for command, actions in test_examples:
+        for token in command.split():
+            if token not in input_vocab:
+                raise ValueError(
+                    "Test input token missing from "
+                    f"training vocabulary: {token}"
+                )
+
+        for token in actions.split():
+            if token not in output_vocab:
+                raise ValueError(
+                    "Test output token missing from "
+                    f"training vocabulary: {token}"
+                )
+
+    # Convert test examples into integer tensors.
     test_dataset = SCANDataset(
         test_examples,
         input_vocab,
         output_vocab,
     )
 
-    # The DataLoader groups commands into batches and pads them.
-    # We set shuffle=False so the examples stay in their original
-    # order, which makes the printed examples reproducible.
+    # Combine test examples into batches.
+    # shuffle=False is important because we want the
+    # printed incorrect examples to match the order
+    # of commands in the official SCAN file.
     test_loader = DataLoader(
         test_dataset,
         batch_size=BATCH_SIZE,
@@ -288,108 +431,139 @@ def main():
     eos_id = output_vocab["<EOS>"]
     pad_id = output_vocab["<PAD>"]
 
+    # Find the longest correct action sequence in the test file.
+    # We add 1 because generation must also produce EOS.
+    # This does not mean the model receives the reference
+    # sequence during generation.
+    # We use reference lengths only to verify that the
+    # safety limit is large enough to permit correct answers.
+    max_reference_steps = max(
+        len(actions.split()) + 1
+        for _, actions in test_examples
+    )
+
+    if args.max_steps < max_reference_steps:
+        raise ValueError(
+            f"Generation limit {args.max_steps} is too small. "
+            f"The longest reference needs {max_reference_steps} "
+            "steps including EOS. Increase --max-steps."
+        )
+
+    # Count complete sequences, not individual tokens.
     total_commands = 0
     correct_commands = 0
 
-    # Store a few examples so we can inspect actual translations.
-    example_predictions = []
+    # Count predictions that never generated EOS.
+    missing_eos_count = 0
 
-    # Process every batch in the official test set.
+    # Save some incorrect examples for inspection.
+    incorrect_examples = []
+
+    # Process the official test set batch by batch.
     for inputs, targets, input_lengths in test_loader:
 
-        # The encoder needs the input navigation commands.
-        inputs = inputs.to(device)
-
-        # Generate complete action sequences WITHOUT giving the
-        # correct target actions to the decoder.
-        predicted_sequences = generate_actions(
+        # Only the input commands are passed to the decoder.
+        # The correct target actions are deliberately NOT
+        # passed to greedy_decode().
+        predicted_sequences = greedy_decode(
             model=model,
-            inputs=inputs,
+            inputs=inputs.to(device),
             input_lengths=input_lengths,
             sos_id=sos_id,
             eos_id=eos_id,
-            max_output_length=MAX_OUTPUT_LENGTH,
+            max_steps=args.max_steps,
         )
 
-        # The DataLoader still gives us the correct target sequences.
-        # We do NOT pass them to the model.
-        # We use them only AFTER generation to check whether the
-        # model's predicted action sequence is correct.
+        # Compare each generated sequence with its reference.
         for i, predicted in enumerate(predicted_sequences):
 
-            # Each target includes SOS at the beginning and EOS at
-            # the end, plus possible PAD tokens added for batching.
-            # Remove these special tokens to recover the real
-            # expected action sequence.
-            correct_sequence = [
+            # Targets have the form: [SOS, I_JUMP, I_JUMP, EOS, PAD, PAD]
+            # We remove:
+            #     - The initial SOS
+            #     - Artificial trailing PAD tokens
+            # We KEEP EOS because correctly stopping is part of the translation task.
+            expected = [
                 token_id
-                for token_id in targets[i].tolist()
-                if token_id not in (sos_id, eos_id, pad_id)
+                for token_id in targets[i].tolist()[1:]
+                if token_id != pad_id
             ]
 
-            # Exact match means every action must be correct,
-            # in the correct order, with no missing or extra actions.
-            is_correct = predicted == correct_sequence
+            # Exact match requires all tokens, including EOS,
+            # to match in the correct order.
+            is_correct = predicted == expected
 
             total_commands += 1
 
             if is_correct:
                 correct_commands += 1
 
-            # Save the first 5 translations for inspection.
-            if len(example_predictions) < 5:
-                example_predictions.append(
-                    (
-                        predicted,
-                        correct_sequence,
-                        is_correct,
-                    )
+            if eos_id not in predicted:
+                missing_eos_count += 1
+
+            # Save the first few incorrect examples.
+            # Because shuffle=False, total_commands - 1
+            # identifies the corresponding example in
+            # the original official test file.
+            if (
+                not is_correct
+                and len(incorrect_examples) < args.show_errors
+            ):
+                command = test_examples[
+                    total_commands - 1
+                ][0]
+
+                incorrect_examples.append(
+                    (command, expected, predicted)
                 )
 
-    # Exact-match accuracy is the percentage of commands whose
-    # ENTIRE generated action sequence is exactly correct.
-    # Example: If 950 out of 1000 commands are perfectly translated,
-    # accuracy = (950 / 1000) * 100 = 95%.
+    # Percentage of commands translated completely correctly.
+    # Example: 900 exactly correct out of 1000
+    #     100 * 900 / 1000 = 90%
     accuracy = (
         100.0 * correct_commands / total_commands
     )
 
     print()
-    print("OFFICIAL SCAN RANDOM-SPLIT TEST RESULTS")
-    print("---------------------------------------")
-    print("Total commands:", total_commands)
+    print("OFFICIAL SCAN TEST RESULTS")
+    print("--------------------------")
+    print("Split:", args.split)
+    print("Device:", device)
+    print("Checkpoint epoch:", checkpoint["epoch"])
+    print("Test commands:", total_commands)
     print("Exactly correct:", correct_commands)
+    print("Incorrect:", total_commands - correct_commands)
     print(f"Exact-match accuracy: {accuracy:.2f}%")
+    print("Longest reference (including EOS):", max_reference_steps)
+    print("Generation limit:", args.max_steps)
+    print("Predictions missing EOS:", missing_eos_count)
 
-    # Convert action IDs back into readable action names.
-    # During training, the model worked with integers.
-    # We reverse the output vocabulary to show the actions as text.
-    id_to_output_token = {
-        token_id: token
-        for token, token_id in output_vocab.items()
-    }
-
-    print()
-    print("EXAMPLE PREDICTIONS")
-    print("-------------------")
-
-    for predicted, correct, is_correct in example_predictions:
-
-        predicted_actions = [
+    # Convert token IDs into human-readable action names.
+    # Example: [5, 5, 2]
+    # might become: I_JUMP I_JUMP <EOS>
+    # The actual mapping comes from the saved vocabulary.
+    def readable(token_ids):
+        return " ".join(
             id_to_output_token[token_id]
-            for token_id in predicted
-        ]
+            for token_id in token_ids
+        )
 
-        correct_actions = [
-            id_to_output_token[token_id]
-            for token_id in correct
-        ]
+    if incorrect_examples:
 
-        print("Correct:  ", " ".join(correct_actions))
-        print("Predicted:", " ".join(predicted_actions))
-        print("Match:    ", is_correct)
         print()
+        print("EXAMPLE INCORRECT PREDICTIONS")
+        print("-----------------------------")
+
+        for command, expected, predicted in incorrect_examples:
+
+            print("Command:  ", command)
+            print("Expected: ", readable(expected))
+            print("Predicted:", readable(predicted))
+            print()
 
 
 if __name__ == "__main__":
     main()
+
+# Our training loss tells us how well the decoder predicts the next action when given the correct previous actions.
+# Our evaluation accuracy tells us how well it translates an entire command when it must rely on its own predictions.
+# The second measure is what we need for the SCAN comparison.
