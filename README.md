@@ -262,4 +262,18 @@ The code and training configuration are provided to reproduce the experiments. N
 
 3. Lake, B. M., & Baroni, M. Official SCAN dataset repository. https://github.com/brendenlake/SCAN
 
-Implementation and other external sources used during development will be documented and cited as appropriate.
+## Code provenance and AI assistance
+
+The implementation was developed for this course project using Python and PyTorch, with assistance from OpenAI ChatGPT.
+
+ChatGPT was used to help draft and revise code, explain model architectures and tensor operations, develop training and evaluation scripts, and troubleshoot implementation issues. The project members are responsible for reviewing, testing, understanding, and validating the submitted code.
+
+The LSTM implementation uses standard PyTorch components, including embeddings, LSTM layers, cross-entropy loss, and the Adam optimizer. The sequence-to-sequence architecture and experimental setup are informed by the SCAN benchmark and the relevant research literature.
+
+The official SCAN dataset is obtained from the repository maintained by Lake and Baroni. The dataset and associated paper are cited below.
+
+No specific third-party implementation repository has been intentionally copied into the LSTM code during the documented development process. However, AI-generated code is not guaranteed to be unique, and this statement does not constitute a verification of code originality.
+
+Any external implementation, tutorial, or repository subsequently used to guide or adapt code will be documented with its URL, the affected files, and a description of what was reused or modified.
+
+All submitted code remains the responsibility of the project members, including its correctness, originality, and compliance with course requirements.
