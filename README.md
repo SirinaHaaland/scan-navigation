@@ -210,3 +210,33 @@ The test completed successfully. Training loss decreased from 2.2004 at step 1 t
 
 This verifies that the model can learn from a small batch. It does not measure generalization or performance on the official SCAN test splits.
 
+### LSTM training on the SCAN random split
+
+The first full LSTM training experiment is implemented in `src/train_lstm_full.py`.
+
+The official SCAN random-split training file contains 16,728 examples. These were randomly divided using seed 42 into 15,056 training examples (90%) and 1,672 validation examples (10%). The official test file was not used during training or validation.
+
+The training configuration was:
+
+- Model: single-layer LSTM encoder-decoder without attention
+- Embedding dimension: 64
+- Hidden dimension: 128
+- Batch size: 64
+- Optimizer: Adam
+- Learning rate: 0.001
+- Loss: cross-entropy for next-action prediction, ignoring padding
+- Gradient clipping: maximum norm 1.0
+- Training duration: 10 epochs
+- Random seed: 42
+
+Run training on GPU 2 from the project root:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/train_lstm_full.py
+```
+
+The experiment completed successfully. Training loss decreased from 0.7487 in epoch 1 to 0.0165 in epoch 10. Validation loss decreased from 0.3607 to a best value of 0.0226 in epoch 10.
+
+The best model checkpoint was saved to `checkpoints/lstm_random_best.pt`.
+
+These results measure teacher-forced next-action prediction loss, not exact-match accuracy for independently generated action sequences. Official SCAN test-set evaluation remains to be implemented.

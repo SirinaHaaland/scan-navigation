@@ -23,3 +23,6 @@ runs/
 # Local Python environments
 .conda-env/
 .venv/
+
+# Trained model checkpoints
+checkpoints/
