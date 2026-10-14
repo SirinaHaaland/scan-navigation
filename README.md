@@ -254,14 +254,6 @@ These scripts verify dataset parsing, batching, tensor dimensions, and basic mod
 
 The code and training configuration are provided to reproduce the experiments. Numerical results may vary slightly with hardware, software versions, and nondeterministic operations.
 
-## References
-
-1. Lake, B. M., & Baroni, M. (2018). *Generalization without Systematicity: On the Compositional Skills of Sequence-to-Sequence Recurrent Networks.* ICML. https://arxiv.org/abs/1711.00350
-
-2. Csordás, R., Irie, K., & Schmidhuber, J. (2021). *The Devil is in the Detail: Simple Tricks Improve Systematic Generalization of Transformers.* EMNLP. https://arxiv.org/abs/2108.12284
-
-3. Lake, B. M., & Baroni, M. Official SCAN dataset repository. https://github.com/brendenlake/SCAN
-
 ## Code provenance and AI assistance
 
 The implementation was developed for this course project using Python and PyTorch, with assistance from OpenAI ChatGPT.
@@ -277,3 +269,11 @@ No specific third-party implementation repository has been intentionally copied 
 Any external implementation, tutorial, or repository subsequently used to guide or adapt code will be documented with its URL, the affected files, and a description of what was reused or modified.
 
 All submitted code remains the responsibility of the project members, including its correctness, originality, and compliance with course requirements.
+
+## References
+
+1. Lake, B. M., & Baroni, M. (2018). *Generalization without Systematicity: On the Compositional Skills of Sequence-to-Sequence Recurrent Networks.* ICML. https://arxiv.org/abs/1711.00350
+
+2. Csordás, R., Irie, K., & Schmidhuber, J. (2021). *The Devil is in the Detail: Simple Tricks Improve Systematic Generalization of Transformers.* EMNLP. https://arxiv.org/abs/2108.12284
+
+3. Lake, B. M., & Baroni, M. Official SCAN dataset repository. https://github.com/brendenlake/SCAN
