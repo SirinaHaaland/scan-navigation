@@ -240,3 +240,4 @@ The experiment completed successfully. Training loss decreased from 0.7487 in ep
 The best model checkpoint was saved to `checkpoints/lstm_random_best.pt`.
 
 These results measure teacher-forced next-action prediction loss, not exact-match accuracy for independently generated action sequences. Official SCAN test-set evaluation remains to be implemented.
+
