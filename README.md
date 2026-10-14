@@ -241,3 +241,29 @@ The best model checkpoint was saved to `checkpoints/lstm_random_best.pt`.
 
 These results measure teacher-forced next-action prediction loss, not exact-match accuracy for independently generated action sequences. Official SCAN test-set evaluation remains to be implemented.
 
+### LSTM evaluation on the SCAN random split
+
+The trained LSTM was evaluated using `src/evaluate_lstm.py` on the official SCAN random-split test set (`tasks_test_simple.txt`).
+
+Evaluation uses greedy autoregressive decoding. The decoder begins with `<SOS>` and generates one action token at a time, using its own previous prediction as input. Generation stops when `<EOS>` is predicted or when the maximum output length of 100 is reached.
+
+The model was evaluated using the checkpoint `checkpoints/lstm_random_best.pt`, selected by the lowest teacher-forced validation loss during training (epoch 10).
+
+**Official test results:**
+
+| Metric | Result |
+|---|---:|
+| Test commands | 4,182 |
+| Exactly correct sequences | 3,745 |
+| Incorrect sequences | 437 |
+| Exact-match accuracy | **89.55%** |
+
+A prediction counts as correct only when the entire generated action sequence exactly matches the reference sequence.
+
+Run the evaluation from the project root:
+
+```bash
+CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/evaluate_lstm.py
+```
+
+This result measures performance on the official random split. Generalization to longer commands and the add-primitive split has not yet been evaluated.
