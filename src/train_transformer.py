@@ -25,6 +25,7 @@ The official SCAN splits test different kinds of generalization:
 """
 
 import argparse
+import csv
 import random
 from pathlib import Path
 
@@ -44,10 +45,25 @@ TRAIN_FILES = {
     "add_jump": "add_prim_split/tasks_train_addprim_jump.txt",
 }
 
-# Reuse the LSTM's data split, seed, batch size, and epoch budget.
+# Transformer_v1 reuse the LSTM's data split, seed, batch size, and epoch budget.
+# SEED = 42
+# BATCH_SIZE = 64
+# NUM_EPOCHS = 10
+# VALIDATION_FRACTION = 0.10
+# GRADIENT_CLIP = 1.0
+
+# Transformer_v2: Keep the same seed, batch size, and validation fraction as v1.
+# This makes the v1-v2 comparison more controlled.
 SEED = 42
 BATCH_SIZE = 64
-NUM_EPOCHS = 10
+
+# Allow more training than the original 10 epochs.
+# This is a maximum; early stopping may end the run sooner.
+NUM_EPOCHS = 50
+
+# Stop after 10 consecutive epochs without a new best validation loss.
+EARLY_STOPPING_PATIENCE = 10
+
 VALIDATION_FRACTION = 0.10
 GRADIENT_CLIP = 1.0
 
@@ -187,7 +203,45 @@ def main():
         help="Which official SCAN training split to use",
     )
 
+    # Added for v_2: Maximum training duration.
+    parser.add_argument(
+        "--epochs",
+        type=int,
+        default=NUM_EPOCHS,
+        help="Maximum number of epochs (default: 50)",
+    )
+
+    # Added for v_2: Number of consecutive non-improving validation epochs allowed.
+    parser.add_argument(
+        "--patience",
+        type=int,
+        default=EARLY_STOPPING_PATIENCE,
+        help="Early-stopping patience (default: 10)",
+    )
+
+    # Added for v_2: A version label so that v2 cannot overwrite v1 checkpoints.
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        default="v2",
+        help="Experiment version, for example v2",
+    )
+
     args = parser.parse_args()
+
+    # Check that the command-line settings make sense.
+    if args.epochs < 1:
+        parser.error("--epochs must be at least 1")
+
+    if args.patience < 1:
+        parser.error("--patience must be at least 1")
+
+    # Prevent unusual characters or path separators in output filenames.
+    if not args.run_name.replace("_", "").replace("-", "").isalnum():
+        parser.error(
+            "--run-name may contain only letters, digits, "
+            "underscores, and hyphens"
+        )
 
     set_random_seed(SEED)
 
@@ -314,21 +368,52 @@ def main():
         lr=LEARNING_RATE,
     )
 
+# Store model checkpoints separately by experiment version.
+#
+# Example:
+# checkpoints/transformer_v2_random_best.pt
+# checkpoints/transformer_v2_length_best.pt
+#
+    # This does not overwrite the old v1 checkpoints.
     checkpoint_directory = project_root / "checkpoints"
     checkpoint_directory.mkdir(parents=True, exist_ok=True)
 
     checkpoint_path = (
-        checkpoint_directory /
-        f"transformer_{args.split}_best.pt"
+        checkpoint_directory
+        / f"transformer_{args.run_name}_{args.split}_best.pt"
     )
 
+    # Store the learning curves as CSV files.
+    # They can later be plotted in the report.
+    history_directory = project_root / "results" / "training_histories"
+    history_directory.mkdir(parents=True, exist_ok=True)
+
+    history_path = (
+        history_directory
+        / f"transformer_{args.run_name}_{args.split}.csv"
+    )
+
+    # Lowest validation loss observed so far.
     best_validation_loss = float("inf")
+
+    # Epoch at which the lowest validation loss occurred.
     best_epoch = None
+
+    # How many consecutive epochs have failed to improve validation loss?
+    epochs_without_improvement = 0
+
+    # One entry per completed epoch.
+    training_history = []
 
     print()
     print("TRANSFORMER TRAINING EXPERIMENT")
     print("-------------------------------")
     print(f"Split: {args.split}")
+    print(f"Experiment version: {args.run_name}")
+    print(f"Maximum epochs: {args.epochs}")
+    print(f"Early-stopping patience: {args.patience}")
+    print(f"Learning rate: {LEARNING_RATE}")
+    print(f"Training history file: {history_path}")
     print(f"Device: {device}")
     print(f"Official training file: {training_path}")
     print(f"Training examples: {len(training_examples)}")
@@ -344,7 +429,13 @@ def main():
     print(f"Trainable parameters: {sum(p.numel() for p in model.parameters()):,}")
     print(flush=True)
 
-    for epoch in range(1, NUM_EPOCHS + 1):
+# Training and validation
+
+    for epoch in range(1, args.epochs + 1):
+
+        # 1. Train for one complete epoch.
+        # run_one_epoch() enables gradient computation and
+        # updates the model because an optimizer is provided.
         training_loss = run_one_epoch(
             model,
             training_loader,
@@ -353,6 +444,11 @@ def main():
             optimizer=optimizer,
         )
 
+        # 2. Evaluate on the validation subset.
+        # optimizer=None tells run_one_epoch() not to update
+        # the model's weights.
+        # This is teacher-forced token-level validation loss,
+        # not autoregressive exact-match accuracy.
         validation_loss = run_one_epoch(
             model,
             validation_loader,
@@ -361,32 +457,59 @@ def main():
             optimizer=None,
         )
 
+        # 3. Print the losses.
         print(
-            f"Epoch {epoch:2d}/{NUM_EPOCHS} | "
+            f"Epoch {epoch:2d}/{args.epochs} | "
             f"Train loss: {training_loss:.4f} | "
             f"Validation loss: {validation_loss:.4f}",
             flush=True,
         )
 
-        # Only validation loss decides which checkpoint is best.
-        # We never look at official test accuracy during training.
+        # 4. Record the losses.
+        # One dictionary becomes one row in the CSV file.
+        training_history.append(
+            {
+                "epoch": epoch,
+                "train_loss": training_loss,
+                "validation_loss": validation_loss,
+            }
+        )
+
+        # 5. Save the best checkpoint.
+        # A lower validation loss is considered an improvement.
         if validation_loss < best_validation_loss:
+
             best_validation_loss = validation_loss
             best_epoch = epoch
 
+            # Reset patience because this epoch improved.
+            epochs_without_improvement = 0
+
             torch.save(
                 {
+                    # Learned model weights.
                     "model_state_dict": model.state_dict(),
+
+                    # Vocabularies needed for evaluation.
                     "input_vocab": input_vocab,
                     "output_vocab": output_vocab,
+
+                    # Experiment identification.
                     "split": args.split,
+                    "run_name": args.run_name,
                     "epoch": epoch,
                     "validation_loss": validation_loss,
+
+                    # Data and reproducibility settings.
                     "seed": SEED,
                     "training_file": TRAIN_FILES[args.split],
                     "validation_fraction": VALIDATION_FRACTION,
                     "batch_size": BATCH_SIZE,
+
+                    # Optimizer settings.
                     "learning_rate": LEARNING_RATE,
+
+                    # Architecture settings.
                     "model_dim": MODEL_DIM,
                     "num_heads": NUM_HEADS,
                     "num_encoder_layers": NUM_ENCODER_LAYERS,
@@ -394,6 +517,14 @@ def main():
                     "feedforward_dim": FEEDFORWARD_DIM,
                     "dropout": DROPOUT,
                     "max_length": MAX_POSITION_LENGTH,
+
+                    # Record that we kept the original v1
+                    # embedding-scaling behavior.
+                    "embedding_scaling": "sqrt_model_dim",
+
+                    # Training-budget settings.
+                    "max_epochs": args.epochs,
+                    "early_stopping_patience": args.patience,
                 },
                 checkpoint_path,
             )
@@ -403,17 +534,67 @@ def main():
                 flush=True,
             )
 
+        else:
+
+            # Validation loss did not improve this epoch.
+            epochs_without_improvement += 1
+
+            print(
+                f"  No improvement for "
+                f"{epochs_without_improvement} epoch(s).",
+                flush=True,
+            )
+
+        # 6. Save the complete history after EVERY epoch.
+        # This protects the recorded losses if a long GPU run
+        # is interrupted before training finishes.
+        with open(
+            history_path,
+            "w",
+            newline="",
+            encoding="utf-8",
+        ) as history_file:
+
+            writer = csv.DictWriter(
+                history_file,
+                fieldnames=[
+                    "epoch",
+                    "train_loss",
+                    "validation_loss",
+                ],
+            )
+
+            writer.writeheader()
+            writer.writerows(training_history)
+
+        # 7. Stop early if validation has stopped improving.
+        # The best checkpoint remains saved on disk.
+        if epochs_without_improvement >= args.patience:
+
+            print(
+                f"\nEarly stopping at epoch {epoch}: "
+                f"no validation improvement for "
+                f"{args.patience} consecutive epochs.",
+                flush=True,
+            )
+
+            break
+
     print()
     print("TRAINING COMPLETED")
     print(f"Split: {args.split}")
+    print(f"Experiment version: {args.run_name}")
+    print(f"Epochs completed: {len(training_history)}")
     print(f"Best epoch: {best_epoch}")
     print(f"Best validation loss: {best_validation_loss:.6f}")
     print(f"Best checkpoint: {checkpoint_path}")
+    print(f"Training history: {history_path}")
     print()
     print(
         "Next: evaluate the checkpoint using evaluate_transformer.py "
         "with the same --split argument."
     )
+
 
 
 if __name__ == "__main__":

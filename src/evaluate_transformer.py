@@ -179,6 +179,13 @@ def main():
         help="Number of incorrect predictions to display",
     )
 
+    parser.add_argument(
+    "--run-name",
+    type=str,
+    default="v2",
+    help="Experiment version, for example v2",
+    )
+
     args = parser.parse_args()
 
     if args.max_steps < 1:
@@ -192,7 +199,7 @@ def main():
     checkpoint_path = (
         project_root /
         "checkpoints" /
-        f"transformer_{args.split}_best.pt"
+        f"transformer_{args.run_name}_{args.split}_best.pt"
     )
 
     test_path = (
