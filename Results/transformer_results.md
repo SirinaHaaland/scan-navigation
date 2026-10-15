@@ -330,6 +330,74 @@ All other settings, including Pre-LN architecture, positional encoding, data spl
 
 The initial experiment will use the random split. Length and add-jump will be trained only after reviewing the random-split training and validation behavior.
 
-### Status
+## Experiment v4 — Learning-rate warmup and cosine decay
 
-**Planned — not yet trained or evaluated.**
+### Purpose
+
+Experiment v4 investigated whether changing the learning-rate schedule could improve the Pre-LN Transformer's optimization and exact-match accuracy.
+
+### Changes from v3
+
+The architecture and data-processing procedure remained unchanged from v3.
+
+The constant learning rate of 0.0005 was replaced with:
+
+- Linear warmup for 1,000 optimizer steps
+- Peak learning rate of 0.0005
+- Cosine decay toward a minimum learning rate of 0.00005
+- Schedule updates after every optimizer step
+
+Other settings remained unchanged:
+
+- Pre-LN (`norm_first=True`)
+- Model dimension 128, 4 attention heads
+- 2 encoder layers and 2 decoder layers
+- Feedforward dimension 256
+- Dropout 0.1
+- Batch size 64
+- Adam optimizer
+- Maximum 50 epochs
+- Early-stopping patience 10
+- Random seed 42
+- Same official SCAN training and test files
+- Same teacher-forced validation loss and greedy autoregressive exact-match evaluation
+
+The experiment initially focused on the random split.
+
+### Random-split results
+
+| Metric | V3: Constant learning rate | V4: Warmup and cosine decay |
+|---|---:|---:|
+| Best epoch | 48 | 50 |
+| Best validation loss | 0.177263 | 0.254702 |
+| Correct / Total | 1,234 / 4,182 | 596 / 4,182 |
+| Exact-match accuracy | 29.51% | 14.25% |
+| Missing EOS | 0 | 4 |
+
+All 50 epochs completed. Early stopping did not activate.
+
+### Interpretation
+
+The warmup and cosine-decay schedule did not improve the random-split results. Compared with v3, the model achieved higher validation loss and substantially lower exact-match accuracy.
+
+This suggests that the particular learning-rate schedule was less effective than a constant learning rate for this implementation and training budget.
+
+The experiment does not establish that all warmup or decay schedules are ineffective. Other warmup durations, minimum learning rates, or training budgets could produce different results.
+
+Error examples continued to show excessive repetition, incorrect action counts, and incorrect ordering of composed commands.
+
+### Decision
+
+The v4 experiment was stopped after the random split because it underperformed v3 on both validation loss and test accuracy.
+
+The length and add-jump splits were not evaluated for v4.
+
+Further work will prioritize diagnosing the Transformer's ability to memorize a small training subset and examining autoregressive sequence-generation errors rather than introducing additional optimization changes.
+
+### Saved checkpoint
+
+- `checkpoints/transformer_v4_warmup_random_best.pt`
+
+### Saved training history
+
+- `results/training_histories/transformer_v4_warmup_random.csv`

@@ -261,6 +261,10 @@ def main():
         input_pad_id=input_vocab["<PAD>"],
         output_pad_id=output_vocab["<PAD>"],
         max_length=checkpoint["max_length"],
+
+        # V1 and v2 did not record this setting, and both used Post-LN.
+        # V3 and v4 explicitly save True for Pre-LN.
+        norm_first=checkpoint.get("norm_first", False),
     ).to(device)
 
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -385,6 +389,9 @@ def main():
     print("OFFICIAL SCAN TRANSFORMER TEST RESULTS")
     print("--------------------------------------")
     print(f"Split: {args.split}")
+    print(f"Experiment version: {args.run_name}")
+    print(f"Pre-LN: {checkpoint.get('norm_first', False)}")
+    print(f"LR schedule: {checkpoint.get('lr_schedule', 'constant')}")
     print(f"Device: {device}")
     print(f"Checkpoint epoch: {checkpoint['epoch']}")
     print(f"Test commands: {total_count}")

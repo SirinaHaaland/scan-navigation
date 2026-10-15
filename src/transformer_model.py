@@ -142,6 +142,7 @@ class TransformerSeq2Seq(nn.Module):
         input_pad_id=0,
         output_pad_id=0,
         max_length=512,
+        norm_first=False, # added configurable norm_first parameter
     ):
         super().__init__()
 
@@ -217,7 +218,7 @@ class TransformerSeq2Seq(nn.Module):
             dim_feedforward=feedforward_dim,
             dropout=dropout,
             batch_first=True,
-            norm_first=True, # norm_first=False in Transformer v1 and v2, changed  to True for v3
+            norm_first=norm_first, # False in Transformer v1 and v2, True for v3, configurable (True) for v4
         )
 
         # Linear layer that projects the decoder's feature 

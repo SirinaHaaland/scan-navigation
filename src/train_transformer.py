@@ -26,6 +26,7 @@ The official SCAN splits test different kinds of generalization:
 
 import argparse
 import csv
+import math
 import random
 from pathlib import Path
 
@@ -77,7 +78,58 @@ DROPOUT = 0.1
 MAX_POSITION_LENGTH = 512
 
 # Optimization: an initial Transformer learning rate.
+# Only LEARNING_RATE = 0.0005 used for v1, v2 and v3, whilst
+# a linear warmup followed by cosine decay added for v4 to
+# allow the attention heads to properly stabilize early on, 
+# for trying to improve length and compositional generalization.
+# For v4 0.0005 is max learning rate, reached at end of warmup
 LEARNING_RATE = 0.0005
+
+# V4: start with a small learning rate, then increase it linearly.
+WARMUP_STEPS = 1000
+
+# V4: the learning rate approaches this value by the end of training.
+MIN_LEARNING_RATE = 0.00005
+
+# V4 uses the same Pre-LN architecture as v3.
+NORM_FIRST = True
+
+def learning_rate_at_step(
+    step,
+    total_steps,
+    warmup_steps,
+    peak_learning_rate,
+    min_learning_rate,
+):
+    """
+    Compute the learning rate for one optimizer update.
+    Step numbers start at 1.
+    Phase 1: Linear warmup
+        Gradually increase the learning rate until warmup_steps.
+    Phase 2: Cosine decay
+        Gradually decrease the learning rate from the peak
+        toward min_learning_rate.
+
+    The schedule is based on optimizer steps (batches), not epochs.
+    """
+
+    # During warmup, increase the learning rate linearly.
+    if step <= warmup_steps:
+        return peak_learning_rate * step / warmup_steps
+
+    # Number of steps remaining after warmup.
+    decay_steps = total_steps - warmup_steps
+
+    # Fraction of the decay period completed, between 0 and 1.
+    progress = (step - warmup_steps) / decay_steps
+    progress = min(max(progress, 0.0), 1.0)
+
+    # Cosine goes smoothly from 1 to 0 as progress goes from 0 to 1.
+    cosine_factor = 0.5 * (1.0 + math.cos(math.pi * progress))
+
+    return min_learning_rate + (
+        peak_learning_rate - min_learning_rate
+    ) * cosine_factor
 
 
 def set_random_seed(seed):
@@ -99,7 +151,7 @@ def set_random_seed(seed):
         torch.cuda.manual_seed_all(seed)
 
 
-def run_one_epoch(model, loader, loss_function, device, optimizer=None):
+def run_one_epoch(model, loader, loss_function, device, optimizer=None, scheduler=None,):
     """
     Run one complete pass over training or validation examples.
     optimizer is provided:Training: Compute gradients and update model weights.
@@ -171,7 +223,13 @@ def run_one_epoch(model, loader, loss_function, device, optimizer=None):
                     max_norm=GRADIENT_CLIP,
                 )
 
+                # Update model parameters using the current learning rate.
                 optimizer.step()
+
+                # V4: advance the learning-rate schedule after each
+                # optimizer update. The next batch uses the new rate.
+                if scheduler is not None:
+                    scheduler.step()
 
             # CrossEntropyLoss(ignore_index=PAD) with default reduction="mean"
             # averages over non-PAD positions in this batch.
@@ -357,19 +415,68 @@ def main():
         input_pad_id=input_vocab["<PAD>"],
         output_pad_id=output_vocab["<PAD>"],
         max_length=MAX_POSITION_LENGTH,
+        norm_first=NORM_FIRST,
     ).to(device)
 
     loss_function = nn.CrossEntropyLoss(
         ignore_index=output_vocab["<PAD>"]
     )
 
+    # One optimizer update occurs for each training batch.
+    steps_per_epoch = len(training_loader)
+
+    # Plan the schedule over the maximum requested training budget.
+    total_training_steps = steps_per_epoch * args.epochs
+
+    if WARMUP_STEPS >= total_training_steps:
+        parser.error(
+            f"Warmup ({WARMUP_STEPS} steps) must be shorter than "
+            f"the complete run ({total_training_steps} steps). "
+            "Increase --epochs or reduce WARMUP_STEPS."
+        )
+
+    if not 0.0 <= MIN_LEARNING_RATE <= LEARNING_RATE:
+        parser.error(
+            "MIN_LEARNING_RATE must be between 0 and LEARNING_RATE."
+        )
+
+    # The first optimizer update uses the first warmup learning rate.
+    initial_learning_rate = learning_rate_at_step(
+        step=1,
+        total_steps=total_training_steps,
+        warmup_steps=WARMUP_STEPS,
+        peak_learning_rate=LEARNING_RATE,
+        min_learning_rate=MIN_LEARNING_RATE,
+    )
+
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=LEARNING_RATE,
+        lr=initial_learning_rate,
+    )
+
+    # LambdaLR multiplies the optimizer's initial learning rate by
+    # a factor returned by our function.
+    #
+    # After optimizer update 1, scheduler.step() prepares the rate
+    # for optimizer update 2, and so on.
+    #
+    # We use the rate for step (scheduler_step + 1) because the
+    # optimizer was initialized with the step-1 learning rate.
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer,
+        lr_lambda=lambda scheduler_step: (
+            learning_rate_at_step(
+                step=scheduler_step + 1,
+                total_steps=total_training_steps,
+                warmup_steps=WARMUP_STEPS,
+                peak_learning_rate=LEARNING_RATE,
+                min_learning_rate=MIN_LEARNING_RATE,
+            )
+            / initial_learning_rate
+        ),
     )
 
 # Store model checkpoints separately by experiment version.
-#
 # Example:
 # checkpoints/transformer_v2_random_best.pt
 # checkpoints/transformer_v2_length_best.pt
@@ -412,7 +519,13 @@ def main():
     print(f"Experiment version: {args.run_name}")
     print(f"Maximum epochs: {args.epochs}")
     print(f"Early-stopping patience: {args.patience}")
-    print(f"Learning rate: {LEARNING_RATE}")
+    print(f"Architecture: Pre-LN (norm_first={NORM_FIRST})")
+    print("LR schedule: linear warmup + cosine decay")
+    print(f"Peak learning rate: {LEARNING_RATE}")
+    print(f"Minimum learning rate: {MIN_LEARNING_RATE}")
+    print(f"Warmup steps: {WARMUP_STEPS}")
+    print(f"Optimizer steps per epoch: {steps_per_epoch}")
+    print(f"Planned optimizer steps: {total_training_steps}")
     print(f"Training history file: {history_path}")
     print(f"Device: {device}")
     print(f"Official training file: {training_path}")
@@ -442,6 +555,7 @@ def main():
             loss_function,
             device,
             optimizer=optimizer,
+            scheduler=scheduler,
         )
 
         # 2. Evaluate on the validation subset.
@@ -465,6 +579,10 @@ def main():
             flush=True,
         )
 
+        # The rate currently prepared for the next optimizer step.
+        # This records the schedule's progress after this epoch.
+        current_learning_rate = optimizer.param_groups[0]["lr"]
+
         # 4. Record the losses.
         # One dictionary becomes one row in the CSV file.
         training_history.append(
@@ -472,6 +590,8 @@ def main():
                 "epoch": epoch,
                 "train_loss": training_loss,
                 "validation_loss": validation_loss,
+                "learning_rate": current_learning_rate,
+                "optimizer_steps": scheduler.last_epoch,
             }
         )
 
@@ -508,6 +628,11 @@ def main():
 
                     # Optimizer settings.
                     "learning_rate": LEARNING_RATE,
+                    "lr_schedule": "linear_warmup_cosine_decay",
+                    "warmup_steps": WARMUP_STEPS,
+                    "min_learning_rate": MIN_LEARNING_RATE,
+                    "total_training_steps": total_training_steps,
+                    "steps_per_epoch": steps_per_epoch,
 
                     # Architecture settings.
                     "model_dim": MODEL_DIM,
@@ -518,8 +643,8 @@ def main():
                     "dropout": DROPOUT,
                     "max_length": MAX_POSITION_LENGTH,
 
-                    # Record the layer-normalization architecture used for v3 run.
-                    "norm_first": True,
+                    # V4 retains the Pre-LN architecture used in v3.
+                    "norm_first": NORM_FIRST,
 
                     # Record that we kept the original v1
                     # embedding-scaling behavior.
@@ -564,6 +689,8 @@ def main():
                     "epoch",
                     "train_loss",
                     "validation_loss",
+                    "learning_rate",
+                    "optimizer_steps",
                 ],
             )
 
