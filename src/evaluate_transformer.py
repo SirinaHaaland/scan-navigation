@@ -182,8 +182,8 @@ def main():
     parser.add_argument(
     "--run-name",
     type=str,
-    default="v2",
-    help="Experiment version, for example v2",
+    default="manual",
+    help="Run name used when training the checkpoint",
     )
 
     args = parser.parse_args()
