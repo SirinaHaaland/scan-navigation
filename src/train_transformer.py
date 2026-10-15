@@ -281,8 +281,23 @@ def main():
     parser.add_argument(
         "--run-name",
         type=str,
-        default="v2",
-        help="Experiment version, for example v2",
+        default="manual",
+        help="Unique run name used for checkpoint and CSV filenames",
+    )
+
+    parser.add_argument(
+        "--norm-first", # selects Pre-LN. Omitting it selects Post-LN.
+        action="store_true",
+        help="Use Pre-LN Transformer (default: Post-LN)",
+    )
+
+    # --lr-schedule constant selects the original fixed learning rate.
+    # --lr-schedule warmup_cosine selects the v4 scheduler.
+    parser.add_argument(
+        "--lr-schedule",
+        choices=["constant", "warmup_cosine"],
+        default="constant",
+        help="Learning-rate schedule (default: constant)",
     )
 
     args = parser.parse_args()
@@ -415,7 +430,7 @@ def main():
         input_pad_id=input_vocab["<PAD>"],
         output_pad_id=output_vocab["<PAD>"],
         max_length=MAX_POSITION_LENGTH,
-        norm_first=NORM_FIRST,
+        norm_first=args.norm_first,
     ).to(device)
 
     loss_function = nn.CrossEntropyLoss(
@@ -424,57 +439,56 @@ def main():
 
     # One optimizer update occurs for each training batch.
     steps_per_epoch = len(training_loader)
-
-    # Plan the schedule over the maximum requested training budget.
     total_training_steps = steps_per_epoch * args.epochs
 
-    if WARMUP_STEPS >= total_training_steps:
-        parser.error(
-            f"Warmup ({WARMUP_STEPS} steps) must be shorter than "
-            f"the complete run ({total_training_steps} steps). "
-            "Increase --epochs or reduce WARMUP_STEPS."
-        )
-
-    if not 0.0 <= MIN_LEARNING_RATE <= LEARNING_RATE:
-        parser.error(
-            "MIN_LEARNING_RATE must be between 0 and LEARNING_RATE."
-        )
-
-    # The first optimizer update uses the first warmup learning rate.
-    initial_learning_rate = learning_rate_at_step(
-        step=1,
-        total_steps=total_training_steps,
-        warmup_steps=WARMUP_STEPS,
-        peak_learning_rate=LEARNING_RATE,
-        min_learning_rate=MIN_LEARNING_RATE,
-    )
-
+    # Constant learning rate for Transformer v1, v2 and v3.
     optimizer = torch.optim.Adam(
         model.parameters(),
-        lr=initial_learning_rate,
+        lr=LEARNING_RATE,
     )
 
-    # LambdaLR multiplies the optimizer's initial learning rate by
-    # a factor returned by our function.
-    #
-    # After optimizer update 1, scheduler.step() prepares the rate
-    # for optimizer update 2, and so on.
-    #
-    # We use the rate for step (scheduler_step + 1) because the
-    # optimizer was initialized with the step-1 learning rate.
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer,
-        lr_lambda=lambda scheduler_step: (
-            learning_rate_at_step(
-                step=scheduler_step + 1,
-                total_steps=total_training_steps,
-                warmup_steps=WARMUP_STEPS,
-                peak_learning_rate=LEARNING_RATE,
-                min_learning_rate=MIN_LEARNING_RATE,
+    scheduler = None
+
+    # Warmup followed by cosine decay for Transformer v4.
+    if args.lr_schedule == "warmup_cosine":
+
+        if WARMUP_STEPS >= total_training_steps:
+            parser.error(
+                f"Warmup ({WARMUP_STEPS} steps) must be shorter than "
+                f"the complete run ({total_training_steps} steps)."
             )
-            / initial_learning_rate
-        ),
-    )
+
+        if not 0.0 <= MIN_LEARNING_RATE <= LEARNING_RATE:
+            parser.error(
+                "MIN_LEARNING_RATE must be between 0 and LEARNING_RATE."
+            )
+
+        initial_learning_rate = learning_rate_at_step(
+            step=1,
+            total_steps=total_training_steps,
+            warmup_steps=WARMUP_STEPS,
+            peak_learning_rate=LEARNING_RATE,
+            min_learning_rate=MIN_LEARNING_RATE,
+        )
+
+        optimizer = torch.optim.Adam(
+            model.parameters(),
+            lr=initial_learning_rate,
+        )
+
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda scheduler_step: (
+                learning_rate_at_step(
+                    step=scheduler_step + 1,
+                    total_steps=total_training_steps,
+                    warmup_steps=WARMUP_STEPS,
+                    peak_learning_rate=LEARNING_RATE,
+                    min_learning_rate=MIN_LEARNING_RATE,
+                )
+                / initial_learning_rate
+            ),
+        )
 
 # Store model checkpoints separately by experiment version.
 # Example:
@@ -519,8 +533,8 @@ def main():
     print(f"Experiment version: {args.run_name}")
     print(f"Maximum epochs: {args.epochs}")
     print(f"Early-stopping patience: {args.patience}")
-    print(f"Architecture: Pre-LN (norm_first={NORM_FIRST})")
-    print("LR schedule: linear warmup + cosine decay")
+    print(f"Pre-LN: {args.norm_first}")
+    print(f"LR schedule: {args.lr_schedule}")
     print(f"Peak learning rate: {LEARNING_RATE}")
     print(f"Minimum learning rate: {MIN_LEARNING_RATE}")
     print(f"Warmup steps: {WARMUP_STEPS}")
@@ -591,7 +605,7 @@ def main():
                 "train_loss": training_loss,
                 "validation_loss": validation_loss,
                 "learning_rate": current_learning_rate,
-                "optimizer_steps": scheduler.last_epoch,
+                "optimizer_steps": epoch * steps_per_epoch, # works for both constant and scheduled learning rates
             }
         )
 
@@ -628,7 +642,7 @@ def main():
 
                     # Optimizer settings.
                     "learning_rate": LEARNING_RATE,
-                    "lr_schedule": "linear_warmup_cosine_decay",
+                    "lr_schedule": args.lr_schedule,
                     "warmup_steps": WARMUP_STEPS,
                     "min_learning_rate": MIN_LEARNING_RATE,
                     "total_training_steps": total_training_steps,
@@ -644,7 +658,7 @@ def main():
                     "max_length": MAX_POSITION_LENGTH,
 
                     # V4 retains the Pre-LN architecture used in v3.
-                    "norm_first": NORM_FIRST,
+                    "norm_first": args.norm_first,
 
                     # Record that we kept the original v1
                     # embedding-scaling behavior.
