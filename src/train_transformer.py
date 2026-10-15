@@ -518,6 +518,9 @@ def main():
                     "dropout": DROPOUT,
                     "max_length": MAX_POSITION_LENGTH,
 
+                    # Record the layer-normalization architecture used for v3 run.
+                    "norm_first": True,
+
                     # Record that we kept the original v1
                     # embedding-scaling behavior.
                     "embedding_scaling": "sqrt_model_dim",
