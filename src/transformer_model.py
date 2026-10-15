@@ -201,6 +201,11 @@ class TransformerSeq2Seq(nn.Module):
         # of independent data samples) first to efficiently process multiple sequences 
         # of varying lengths in parallel.
 
+        # Layer normalization scales features to stabilize training. Setting norm_first=True (Pre-LN) 
+        # for Transformer v3 applies normalization before attention and feedforward blocks rather than 
+        # after (norm_first=False, used in v1 and v2), creating a cleaner gradient flow that prevents 
+        # instability when training a Transformer from scratch
+
         # Encoder self-attention sees the full input command.
         # Decoder self-attention must be causally masked.
         # Decoder cross-attention sees encoder representations.
@@ -212,7 +217,7 @@ class TransformerSeq2Seq(nn.Module):
             dim_feedforward=feedforward_dim,
             dropout=dropout,
             batch_first=True,
-            norm_first=False,
+            norm_first=True, # norm_first=False in Transformer v1 and v2, changed  to True for v3
         )
 
         # Linear layer that projects the decoder's feature 

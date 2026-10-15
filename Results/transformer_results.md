@@ -67,8 +67,6 @@ Potential factors requiring investigation include:
 
 The current results must be preserved rather than overwritten when running further experiments.
 
-## Saved checkpoints
-
 ## Saved checkpoints — Baseline v1
 
 The original v1 checkpoints were preserved before further experiments in:
@@ -210,7 +208,128 @@ This test is intended to help distinguish implementation or optimization problem
 
 ### Status
 
+## Experiment v3 — Pre-LN Transformer
+
+### Purpose
+
+Experiment v3 investigated whether changing the placement of layer normalization could improve Transformer optimization and generalization on SCAN.
+
+The previous experiments used Post-LN (`norm_first=False`). In v3, the Transformer was changed to Pre-LN (`norm_first=True`).
+
+### Changes from v2
+
+The main architectural change was:
+
+- V2: Post-LN (`norm_first=False`)
+- V3: Pre-LN (`norm_first=True`)
+
+The remaining settings were kept unchanged:
+
+- Model dimension: 128
+- Attention heads: 4
+- Encoder layers: 2
+- Decoder layers: 2
+- Feedforward dimension: 256
+- Dropout: 0.1
+- Positional encoding: Fixed sinusoidal
+- Embedding scaling: Square root of the model dimension
+- Optimizer: Adam
+- Learning rate: 0.0005 (constant)
+- Batch size: 64
+- Maximum training duration: 50 epochs
+- Early-stopping patience: 10
+- Random seed: 42
+- Validation fraction: 10%
+- Checkpoint selection: Lowest teacher-forced validation loss
+- Evaluation: Greedy autoregressive decoding, maximum 200 tokens, exact-match accuracy requiring `<EOS>`
+
+Each v3 model was trained from scratch. No v2 weights were reused.
+
+### V3 results — 50 epochs
+
+| Split | Best epoch | Best validation loss | Correct / Total | Exact-match accuracy | Missing EOS |
+|---|---:|---:|---:|---:|---:|
+| Random | 48 | 0.177263 | 1,234 / 4,182 | 29.51% | 0 |
+| Length | 49 | 0.119542 | 33 / 3,920 | 0.84% | 0 |
+| Add jump | 47 | 0.213960 | 1 / 7,706 | 0.01% | 0 |
+
+All three runs completed 50 epochs. Early stopping did not activate.
+
+### Comparison of v2 and v3
+
+| Split | Post-LN v2 | Pre-LN v3 | Difference |
+|---|---:|---:|---:|
+| Random | 10.52% | 29.51% | +18.99 percentage points |
+| Length | 0.31% | 0.84% | +0.53 percentage points |
+| Add jump | 0.00% | 0.01% | +0.01 percentage points |
+
+Pre-LN improved validation loss and official test exact-match accuracy across all three splits in these single-seed experiments.
+
+The largest improvement occurred on the random split. Length generalization improved slightly in absolute terms but remained extremely poor.
+
+### Error analysis
+
+**Random:** Predictions became more accurate, and all test predictions terminated within the generation limit. However, many incorrect predictions still contained excessive repetition or incorrect action counts.
+
+**Length:** The model frequently generated too many repetitions of one action pattern before switching to the next. It therefore struggled to produce the correct number of actions for longer sequences.
+
+**Add jump:** The model correctly translated only one official test command. Errors frequently involved substituting another primitive, such as `I_RUN`, for `I_JUMP` in unseen combinations.
+
+### Interpretation
+
+Changing from Post-LN to Pre-LN was associated with improved optimization and test performance in this implementation.
+
+The reduction in validation loss suggests that Pre-LN made the model easier to train under the chosen settings. However, these results do not establish that Post-LN was the sole cause of earlier difficulties.
+
+Pre-LN also eliminated missing-`<EOS>` predictions within the 200-step generation limit. This is an observed improvement in termination behavior, not evidence that the original evaluation code contained an EOS bug.
+
+Despite these improvements, the Pre-LN Transformer remained substantially worse than the LSTM on random and length SCAN.
+
+| Split | LSTM | Transformer v3 |
+|---|---:|---:|
+| Random | 89.55% | 29.51% |
+| Length | 12.30% | 0.84% |
+| Add jump | 0.03% | 0.01% |
+
+These results describe the specific models and training procedures used. They do not demonstrate that LSTMs are inherently better than Transformers.
+
+The experiments used one random seed, and the LSTM and Transformer had different training budgets and model capacities.
+
+### Saved checkpoints — V3
+
+- `checkpoints/transformer_v3_preln_random_best.pt`
+- `checkpoints/transformer_v3_preln_length_best.pt`
+- `checkpoints/transformer_v3_preln_add_jump_best.pt`
+
+### Saved training histories — V3
+
+- `results/training_histories/transformer_v3_preln_random.csv`
+- `results/training_histories/transformer_v3_preln_length.csv`
+- `results/training_histories/transformer_v3_preln_add_jump.csv`
+
+---
+
+## Planned experiment v4 — Learning-rate warmup and cosine decay
+
+### Motivation
+
+The Pre-LN Transformer improved performance compared with Post-LN, but the random-split accuracy remained far below the LSTM baseline, and length generalization was still extremely weak.
+
+Experiment v4 will investigate whether a learning-rate schedule improves optimization.
+
+### Proposed change
+
+Replace the constant learning rate of 0.0005 with:
+
+1. Linear warmup during the initial optimizer steps.
+2. Cosine learning-rate decay over the remaining training steps.
+
+The maximum learning rate will remain 0.0005.
+
+All other settings, including Pre-LN architecture, positional encoding, data splits, seed, batch size, and decoding method, should remain unchanged.
+
+The initial experiment will use the random split. Length and add-jump will be trained only after reviewing the random-split training and validation behavior.
+
+### Status
+
 **Planned — not yet trained or evaluated.**
-
-Actual v3 training settings, results, and any deviations from this plan will be recorded here after the experiment.
-
