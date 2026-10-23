@@ -34,7 +34,7 @@ We use three official splits:
 
 All paths are relative to `data/scan/`.
 
-Each split is treated as an independent experiment. Models are trained only on the corresponding official training file, with 10% reserved for validation using random seed 42. The official test files are used exclusively for final evaluation.
+Each split is treated as an independent experiment. Models are trained only on the corresponding official training file, with 10% reserved for validation using random seed 42. The official test files are excluded from training and checkpoint selection. Test performance was also inspected during exploratory Transformer development; this limitation is discussed in the project report.
 
 ## 2. Repository structure
 
@@ -403,9 +403,9 @@ Official test-set sizes:
 
 Detailed results, best validation epochs, validation losses, and error examples are recorded in:
 
-- `Results/lstm_results.md`
-- `Results/transformer_results.md`
-- `results/training_histories/`
+- [LSTM experiment results](Results/lstm_results.md)
+- [Transformer experiment results](Results/transformer_results.md)
+- [Transformer training histories](results/training_histories/)
 
 Interpretation and discussion of the results are provided in the accompanying project report.
 
