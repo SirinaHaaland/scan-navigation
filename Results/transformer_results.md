@@ -174,40 +174,6 @@ The results also motivate examining optimization and model architecture before e
 
 ---
 
-## Planned experiment v3 — Pre-LN Transformer
-
-### Motivation
-
-Experiments v1 and v2 used a Post-LN Transformer (`norm_first=False`), where layer normalization is applied after residual addition.
-
-Experiment v3 will investigate whether changing to Pre-LN (`norm_first=True`) improves optimization and autoregressive accuracy.
-
-Pre-LN places layer normalization before each attention or feedforward sublayer, which can improve gradient propagation during training. This is a plausible optimization improvement, but its effectiveness on this SCAN implementation remains to be tested.
-
-### Proposed experimental controls
-
-The intention is to change only the layer-normalization placement while keeping the following settings unchanged from v2:
-
-- Same official SCAN splits and 90/10 training-validation procedure
-- Same random seed (42)
-- Same Transformer dimensions, attention heads, and layer counts
-- Same embedding scaling and sinusoidal positional encoding
-- Same Adam learning rate (0.0005)
-- Same batch size (64)
-- Same maximum training budget (50 epochs)
-- Same early-stopping patience (10)
-- Same greedy decoding and exact-match evaluation
-
-New models will be initialized and trained independently for each split. V1 and v2 checkpoints and results will remain preserved.
-
-### Diagnostic before full training
-
-Before running all three v3 experiments, a small overfitting test should verify that the Transformer can memorize a handful of SCAN examples using autoregressive decoding.
-
-This test is intended to help distinguish implementation or optimization problems from generalization difficulties.
-
-### Status
-
 ## Experiment v3 — Pre-LN Transformer
 
 ### Purpose
@@ -308,27 +274,6 @@ The experiments used one random seed, and the LSTM and Transformer had different
 - `results/training_histories/transformer_v3_preln_add_jump.csv`
 
 ---
-
-## Planned experiment v4 — Learning-rate warmup and cosine decay
-
-### Motivation
-
-The Pre-LN Transformer improved performance compared with Post-LN, but the random-split accuracy remained far below the LSTM baseline, and length generalization was still extremely weak.
-
-Experiment v4 will investigate whether a learning-rate schedule improves optimization.
-
-### Proposed change
-
-Replace the constant learning rate of 0.0005 with:
-
-1. Linear warmup during the initial optimizer steps.
-2. Cosine learning-rate decay over the remaining training steps.
-
-The maximum learning rate will remain 0.0005.
-
-All other settings, including Pre-LN architecture, positional encoding, data splits, seed, batch size, and decoding method, should remain unchanged.
-
-The initial experiment will use the random split. Length and add-jump will be trained only after reviewing the random-split training and validation behavior.
 
 ## Experiment v4 — Learning-rate warmup and cosine decay
 
