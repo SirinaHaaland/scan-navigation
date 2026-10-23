@@ -54,11 +54,3 @@ This confirms that the model encountered the primitive during training but not i
 
 The checkpoint files remain on Gorina4 and are not committed to Git.
 
-## Points for the final report
-
-- Compare random-distribution generalization with length and compositional generalization.
-- Explain why low teacher-forced validation loss does not guarantee high autoregressive test accuracy.
-- Discuss repetition-counting errors and incorrect sequence lengths.
-- Discuss the failure to transfer learned constructions to `jump`.
-- Compare these results with the Transformer using the same official splits and evaluation metric.
-- Consider the limitations of a single random seed, a fixed training budget, and the LSTM architecture without attention.
