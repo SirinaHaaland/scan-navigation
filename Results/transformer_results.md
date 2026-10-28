@@ -337,8 +337,6 @@ The v4 experiment was stopped after the random split because it underperformed v
 
 The length and add-jump splits were not evaluated for v4.
 
-Further work will prioritize diagnosing the Transformer's ability to memorize a small training subset and examining autoregressive sequence-generation errors rather than introducing additional optimization changes.
-
 ### Saved checkpoint
 
 - `checkpoints/transformer_v4_warmup_random_best.pt`
