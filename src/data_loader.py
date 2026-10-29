@@ -54,7 +54,7 @@ class SCANDataset(Dataset):
         target_ids.append(self.output_vocab["<EOS>"])
 
         return (
-            torch.tensor(input_ids, dtype=torch.long), #integer type expected by PyTorch embedding layer
+            torch.tensor(input_ids, dtype=torch.long), # Integer type expected by PyTorch embedding layer
             torch.tensor(target_ids, dtype=torch.long) # Embedding layer will transform token IDs to learned numerical vectors
         )
     
