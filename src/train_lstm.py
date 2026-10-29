@@ -25,6 +25,8 @@ def main():
     # Fixes the random number generator seed so that model weight 
     # initialization and data shuffling are identical every time 
     # you run the script (ensuring reproducibility).
+    # The data is shuffled to prevent the model from memorizing the 
+    # order of the training samples and to ensure it learns general patterns instead
     torch.manual_seed(42)
 
     # Use the GPU if PyTorch can access it.
@@ -56,7 +58,7 @@ def main():
         [actions for _, actions in examples]
     )
 
-    dataset = SCANDataset( # Wraps your parsed examples into a PyTorch-compatible dataset object.
+    dataset = SCANDataset( # Wraps the parsed examples into a PyTorch-compatible dataset object.
         examples,
         input_vocab,
         output_vocab,
@@ -64,7 +66,7 @@ def main():
 
     loader = DataLoader(
     # Sets up a data loader that fetches batches of 4 examples at a time 
-    # and uses your collate_batch function to pad sequences to equal lengths.
+    # and uses the collate_batch function to pad sequences to equal lengths.
         dataset,
         batch_size=4,
         shuffle=False,
@@ -125,7 +127,7 @@ def main():
         # This takes everything except the first token (shifted one step to the right)
         # By shifting the sequence by one index, decoder_inputs provides the current context, 
         # and expected provides the exact target answer the model is trained to match at 
-        # that exact moment (waht it is suppose to predict at each step)
+        # that exact moment (what it is suppose to predict at each step)
         expected = targets[:, 1:]
 
         # CrossEntropyLoss expects:
@@ -165,6 +167,9 @@ def main():
 
         if step == 1 or step % 10 == 0:
         # Prints out the current training step number and loss value on the first step and every 10 steps thereafter to track progress.
+        # One step corresponds to one pass (iteration) through a single training batch, not the entire dataset.
+        # In this code, optimizer.step() updates the model's weights exactly once per batch, meaning if you have multiple batches in an epoch, 
+        # you will run multiple steps to complete one full pass through the entire dataset.
             print(
                 f"Step {step:3d} | "
                 f"Loss: {loss.item():.4f}"
