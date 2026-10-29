@@ -8,10 +8,10 @@ CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/evaluate_transformer.py --
 CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/evaluate_transformer.py --split add_jump
 
 This script measures exact-match accuracy using greedy autoregressive
-generation, just like our LSTM evaluator.
+generation, just like the LSTM evaluator.
 
-A prediction is correct only if every generated action is correct, a
-ctions are in the correct order, no actions are missing or added,
+A prediction is correct only if every generated action is correct, 
+actions are in the correct order, no actions are missing or added,
 the model correctly generates the <EOS> stopping token.
 
 The model receives the input command, but not the correct target actions.
@@ -39,7 +39,7 @@ TEST_FILES = {
 BATCH_SIZE = 64
 
 
-@torch.no_grad() # Tells PyTorch not toi calculate gradients during evaluation.
+@torch.no_grad() # Tells PyTorch not to calculate gradients during evaluation.
 
 # Greedy decode means the model always picks the single highest-scoring 
 # next word at every step without looking ahead at future possibilities. 
@@ -60,12 +60,17 @@ def greedy_decode(
     Output: generated: list of B lists. Each inner list contains predicted action IDs.
     EOS is included ONLY if the model actually generates EOS.
 
-    We encode the source command once. At each generation step, we pass
-    the full generated prefix through the Transformer decoder because
-    a Transformer decoder does not use the LSTM's recurrent hidden state.
+    We encode the source command once. The Encoder takes the input command (e.g., "jump twice") 
+    and converts it into a continuous representation (called memory).
+    The Decoder looks at this memory to figure out what actions to generate. 
+    At each generation step, we pass the full generated prefix (words generated so far) through 
+    the Transformer decoder because a Transformer decoder does not use the LSTM's recurrent hidden state.
     Self-attention considers the available output positions together.
 
     A more optimized implementation could cache attention keys/values.
+    KV caching means saving the previously computed attention states of 
+    past tokens so the model only has to process the newly generated token 
+    at each step rather than recalculating the entire prefix from scratch.
     For this small project, decoding the full prefix is simpler to
     understand and sufficient for a correct baseline.
 
@@ -224,9 +229,7 @@ def main():
         "cuda" if torch.cuda.is_available() else "cpu"
     )
 
-    # Checkpoints contain both the trained weights and the exact
-    # vocabularies used during training.
-    #
+    # Checkpoints contain both the trained weights and the exact vocabularies used during training.
     # Load only checkpoint files created by this project.
     checkpoint = torch.load(
         checkpoint_path,
