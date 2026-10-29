@@ -2,19 +2,19 @@ from pathlib import Path
 
 # Initial script for verifying three things: 
 # 1. That the official SCAN repository downloaded successfully, 
-# 2. that src/dataset.py can read the training file, 
+# 2. that dataset.py can read the training file, 
 # 3. that the tokenization round-trip test passes.
-# This is for proving that we understand and can read the data 
+# This is so that we understand and can read the data 
 # before introducing neural networks.
 
 
 def load_scan_file(filepath):
-    """The load_scan_file function takes the location of a SCAN text file. 
-    It reads the file one line at a time, removes unnecessary whitespace, 
+    """Takes the location of a SCAN text file. 
+    Reads the file one line at a time, removes unnecessary whitespace, 
     checks that the line follows the expected format, and separates the 
     command from its target actions.
-    It stores each example as a pair, e.g. ("jump thrice", "I_JUMP I_JUMP I_JUMP"),
-    because later, a PyTorch dataset will need to retrieve individual training examples.
+    Stores each example as a pair, e.g. ("jump thrice", "I_JUMP I_JUMP I_JUMP"),
+    later, a PyTorch dataset will need to retrieve individual training examples.
     """
 
     pairs = []
@@ -37,7 +37,7 @@ def load_scan_file(filepath):
 
 
 def tokenize(text):
-    """Split a SCAN command or action sequence into tokens (unit of text that the model processes).
+    """Splits a SCAN command or action sequence into tokens (unit of text that the model processes).
     For SCAN, the language is small and structured, and does not require subword tokenization,
     word-level tokenization is sufficient (split commands into words separated by spaces) e.g.
     jump twice becomes ["jump", "twice"], and the target sequence JUMP JUMP becomes ["JUMP", "JUMP"].
