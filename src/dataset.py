@@ -35,15 +35,42 @@ def load_scan_file(filepath):
 
     return pairs
 
-
 def tokenize(text):
-    """Splits a SCAN command or action sequence into tokens (unit of text that the model processes).
-    For SCAN, the language is small and structured, and does not require subword tokenization,
-    word-level tokenization is sufficient (split commands into words separated by spaces) e.g.
-    jump twice becomes ["jump", "twice"], and the target sequence JUMP JUMP becomes ["JUMP", "JUMP"].
-    We will use separate vocabularies (dictionary mapping each token to an integer) for input commands 
-    and output actions because they contain different types of symbols."""
+    """
+    Split a SCAN command or action sequence into tokens.
+
+    A token is one discrete symbol processed by the model.
+    SCAN uses a small, structured vocabulary, so splitting
+    on whitespace is sufficient for this implementation.
+
+    For example:
+
+        Input command:
+            "jump twice"
+
+        Input tokens:
+            ["jump", "twice"]
+
+        Target action sequence:
+            "I_JUMP I_JUMP"
+
+        Target tokens:
+            ["I_JUMP", "I_JUMP"]
+
+    We use separate input and output vocabularies because
+    commands contain words such as "jump" and "twice",
+    while action sequences contain symbols such as
+    "I_JUMP" and "I_TURN_LEFT".
+
+    Each vocabulary maps tokens to integer IDs.
+    These IDs are then converted into learned embeddings
+    before being processed by the neural network.
+
+    This function does not perform stemming, subword
+    tokenization, or any other linguistic preprocessing.
+    """
     return text.split()
+
 
 # Three special tokens are repeated throughout our project.
 # <PAD> is used when sequences have different lengths (should not count as a real word or action).
