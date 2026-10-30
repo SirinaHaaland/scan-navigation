@@ -16,9 +16,14 @@ class LSTMEncoder(nn.Module):
     """Encoder class. Neural networks inherit from nn.Module.
     This tells PyTorch that this class contains trainable components.
     When we create an optimizer, PyTorch can find 
-    the embedding and LSTM parameters automatically.
+    the embedding. When you feed a token ID into the 
+    embedding layer, PyTorch retrieves the corresponding row from this matrix.
+    The optimizer updates the weights of the embedding matrix, where each row 
+    is the learned dense vector representation of a token.
     """
-    def __init__( # The layers the model contains (3 layers)
+    # init initializes the layers the model contains (2 layers + attributes the model can find later in the forward pass).
+    # These are trainable components like nn.Embedding and nn.LSTM assigned to self. PyTorch automatically registers these and tracks their weights.
+    def __init__( 
         self,
         vocab_size,
         embedding_dim,
@@ -27,27 +32,33 @@ class LSTMEncoder(nn.Module):
     ):
         super().__init__() # Initializes the parent nn.Module class so PyTorch can track parameters.
 
+        # Embedding layer: A lookup table (matrix) of weights where each row is a dense vector representing a token.
         # The data loader produces integer token IDs.
         # The embedding layer converts each ID into a trainable vector of numbers.
         # The vectors initially contain randomly initialized values. During training, 
         # the network learns embeddings that help it translate commands into actions.
-        
         self.embedding = nn.Embedding( # Layer that transforms integer token IDs into vectors
             num_embeddings=vocab_size, # How many tokens
             embedding_dim=embedding_dim, # Size of each token vector
             padding_idx=pad_id, # Keeps padding tokens embedding's contribution fixed at zero --> learns no meaningful representation for padding.
         )
 
+        # LSTM layer: Several sets of weight matrices for its internal gates (input, forget, output) that determine how information flows and updates across steps.
+        # An LSTM (Long Short-Term Memory) layer (nn.LSTM) is a recurrent neural network layer designed to process sequential data step by step. Unlike standard 
+        # feedforward layers, it maintains two internal states (hidden state and cell state) to carry and retain context from earlier tokens over long sequences.
         self.lstm = nn.LSTM( # Recurrent layer
             input_size=embedding_dim, # Because the LSTM receives the vectors produced by the embedding layer.
             hidden_size=hidden_dim, # Controls the size of the LSTM's internal states.
             batch_first=True, # Means the input shape is (batch_size, sequence_length, embedding_dim), matching our data loader.
         )
 
-    def forward(self, inputs, input_lengths): # How data flows through teh model
+    # The forward function is the model's forward pass, which runs once per batch during both training and evaluation; 
+    # it completes the first half of the learning process by passing input data through the network to generate outputs, 
+    # while the subsequent backward pass calculates errors and updates the weights so the model actually learns.
+    def forward(self, inputs, input_lengths): # How data flows through the model
         embedded = self.embedding(inputs) # Transforms input IDs into embeddings
 
-        packed = pack_padded_sequence( #Tells PyTorch which positions are real tokens and
+        packed = pack_padded_sequence( # Tells PyTorch which positions are real tokens and
         # which are padding. Lets the LSTM stop processing each command at its actual length.
             embedded,
             lengths=input_lengths.cpu(),
@@ -60,7 +71,8 @@ class LSTMEncoder(nn.Module):
         return hidden, cell # The decoder will receive these states to initialize its own LSTM.
     
 # The next component is the LSTM decoder, which reads the entire input command (e.g. jump twice) and produces two states. 
-# The decoder will use those states to generate the action sequence, one token at a time (e.g. I_JUMP I_JUMP).
+# These two states are the hidden state and the cell state, which together act as a compressed numerical summary of the 
+# entire input command to guide the decoder in generating the correct output action sequence, one token at a time (e.g. I_JUMP I_JUMP).
 
 # The decoder starts with those states and receives the special token <SOS> (start of sequence). Its job is to predict the first action.
 # Then it predicts the next action, continuing until it produces <EOS> (end of sequence).
@@ -102,14 +114,14 @@ class LSTMDecoder(nn.Module): # The model contains three layers
         )
 
     def forward(self, token, hidden, cell):
-        """ Performs a single decoding step by taking the current 
-        token and previous hidden states, passing them through the 
-        LSTM layer to update the recurrent states, and projecting 
+        """Performs a single decoding step by taking the current 
+        token and the previous recurrent states (the hidden and cell states), 
+        passing them through the LSTM layer to update both states, and projecting 
         the output into vocabulary logits for the next token prediction.
-        We return hidden and cell states because each time the decoder 
-        predicts a token, its internal states change. We need to pass 
-        those updated states into the next prediction step so the decoder 
-        can remember what it has generated so far.
+
+        We return both the updated hidden and cell states because each time the decoder 
+        predicts a token, its memory updates. We must pass these updated states 
+        into the next prediction step so the decoder remembers what it has generated so far.
         """
         embedded = self.embedding(token)
 
@@ -123,7 +135,6 @@ class LSTMDecoder(nn.Module): # The model contains three layers
         return logits, hidden, cell
     
 # Next we connect the encoder and decoder by creating a class that contains both components.
-
 class LSTMSeq2Seq(nn.Module): # The complete sequence-to-sequence model architecture, inheriting from PyTorch's nn.Module.
     def __init__( # Sets up the model's sub-components using the provided vocabulary sizes and dimensions.
         self,
