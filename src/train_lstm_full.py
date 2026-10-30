@@ -123,58 +123,182 @@ TRAIN_FILES = {
     "add_jump": "add_prim_split/tasks_train_addprim_jump.txt",
 }
 
-# 2. Hyperparameters: Setting we choose before training.
-# We keep these values the same across the three splits
-# so that differences in performance are easier to interpret.
 
-# All experiments used random seed 42. Starting number used to initialize a pseudo-random number generator, ensuring that a machine learning experiment (like training a Transformer or LSTM) 
-# produces the exact same reproducible results every time it is run. No difference what number you choose, however, choosing a different seed will change the specific random choices made 
-# during training, which can slightly alter your final model's performance. Because of this, sometimes the seed is changed multiple times to ensure the model's success wasn't just a "lucky guess" 
-# from a single number. Used for: Initial Weights: Randomly setting the starting values for the model's parameters (connections) before training begins. 
-# Data Shuffling: Randomly mixing up the order of the training data so the model doesn't learn patterns based on order. Dropout Regularization: Randomly turning off certain connections during training to prevent the model from memorizing the data. By fixing the seed to a specific number (like 42), you freeze these random choices. This makes your experiments completely reproducible, allowing other scientists to run your code and get the exact same results.
+# 2. Hyperparameters: Settings chosen before training.
+#
+# Hyperparameters describe how the model is built and trained.
+# We keep the LSTM hyperparameters the same for random, length,
+# and add-jump so that we are not deliberately giving one split
+# a larger model or different optimization settings.
+#
+# These values define our baseline configuration. We did not
+# perform a systematic search to establish that they are optimal.
+
+# Random seed.
+#
+# Machine-learning training contains random operations.
+# For example, model weights are randomly initialized, the
+# training examples are shuffled, and some neural-network
+# layers can use randomness during training.
+#
+# Using seed 42 makes the random choices more reproducible.
+# The number 42 has no special mathematical advantage.
+#
+# Fixing the seed does not guarantee identical results on
+# every computer. Different GPU operations, PyTorch versions,
+# and nondeterministic algorithms can still introduce variation.
+#
+# We used one seed for the reported experiments. This means
+# our results describe one run per configuration, rather
+# than the average performance across multiple random seeds.
+#
+# Ideally, we would repeat experiments with several seeds
+# and report the mean and variability. This was outside
+# the scope of our completed experiments.
 SEED = 42
 
-# Number of navigation commands processed together.
-# The model looks at 64 unique training examples at the exact same time, calculates the average error, and updates its weights once per batch. 
-# 64 is a standard, modern hardware-friendly baseline. Computer processors (CPUs and GPUs) process data most efficiently in powers of two (32, 64, 128, 256). 
-# 64 provides a stable estimate of the true error gradient while easily fitting into standard hardware memory.
+# Batch size.
+#
+# A batch contains several training examples processed together
+# before the optimizer updates the model weights.
+#
+# BATCH_SIZE = 64 means that most training batches contain
+# 64 commands and their target action sequences. The last
+# batch of an epoch may contain fewer examples.
+#
+# For each batch, the model computes predictions and a loss.
+# Backpropagation calculates gradients, and Adam then performs
+# one parameter update.
+#
+# We chose 64 as a practical compromise between GPU memory,
+# computational efficiency, and the number of optimizer updates.
+#
+# Larger batches use more memory and may change optimization
+# behavior. Smaller batches use less memory but may require
+# more optimizer steps to process an epoch.
+#
+# A batch size of 64 is a reasonable baseline, not a value
+# proven to give the best SCAN generalization.
 BATCH_SIZE = 64
 
-# Each token ID (word or command in the input vocabulary) is converted into a trainable vector containing 64 numbers before entering the LSTM.
-# This allows the model to learn semantic relationships (e.g., grouping "walk" and "run" closer together in this 64-dimensional space). 
-# 64 is relatively small. For massive models or natural language (like English-to-French translation), embeddings are usually 256, 512, or higher. 
-# However, for a focused "command-to-action" task (where the vocabulary size is limited), 64 dimensions are enough to capture the necessary 
-# semantics without wasting memory or causing overfitting.
+# Token embedding dimension.
+#
+# The input to the network begins as integer token IDs.
+# An embedding layer maps each token ID to a learned vector.
+#
+# EMBEDDING_DIM = 64 means that each command token and
+# output-action token is represented using 64 learned features
+# before entering the corresponding LSTM.
+#
+# For example, the embedding of "jump" is not a hand-written
+# definition of jumping. It is a vector whose values are
+# learned from the training examples.
+#
+# Embeddings can learn useful distinctions and relationships
+# between tokens, but we did not inspect the learned embedding
+# space to determine exactly what relationships emerged.
+#
+# We chose 64 because SCAN has a small, structured vocabulary
+# and a compact baseline was sufficient for our experimental
+# design. A larger embedding dimension would increase model
+# parameters and might change performance.
+#
+# We did not test alternative embedding dimensions, so we
+# cannot claim that 64 is optimal or prevents overfitting.
 EMBEDDING_DIM = 64
 
-# The LSTM hidden state contains 128 numbers (size of the model's internal representation as it processes the navigation command or generates actions.)
-# This represents the size of the memory (hidden state and cell state) inside the LSTM. It determines the model's internal capacity to process, summarize, 
-# and remember sequential information. 128 is a classic, lightweight baseline size. It is large enough to hold complex state information for short-to-medium 
-# sequences, but small enough that training will be incredibly fast. If the model fails to learn, this is often one of the first numbers to scale up (to 256 or 512).
+# LSTM hidden-state dimension.
+#
+# An LSTM maintains two kinds of state:
+#
+# 1. Hidden state: the representation passed onward and used
+#    to produce outputs.
+# 2. Cell state: an internal memory state updated through
+#    the LSTM's gating mechanisms.
+#
+# HIDDEN_DIM = 128 means that both the hidden state and
+# cell state have 128 features per LSTM layer and direction.
+#
+# The encoder processes the input command and passes its
+# final hidden and cell states to the decoder.
+#
+# Because our LSTM baseline does not use attention, the
+# decoder relies on these final states rather than directly
+# looking back at every encoded input position.
+#
+# This creates a possible information bottleneck, especially
+# when a command requires a long or complicated action sequence.
+# However, our experiments do not prove that this bottleneck
+# is the sole cause of poor length generalization.
+#
+# We chose 128 as a modest hidden dimension that keeps the
+# model manageable while allowing a nontrivial internal state.
+# We did not test other hidden dimensions.
 HIDDEN_DIM = 128
 
-# Step size used by the Adam optimizer when updating weights.
-# The optimizer is the algorithm that adjusts the model’s weights to reduce errors. 
-# The learning rate controls how large of a step it takes during these adjustments. 
-# Adam adjusts the learning rate automatically for each parameter as it trains. 
-# A learning rate of 0.001 is universally recognized as the default starting point for Adam.
+# Adam learning rate.
+#
+# Adam is the optimizer that adjusts trainable parameters
+# using gradients calculated by backpropagation.
+#
+# LEARNING_RATE = 0.001 sets the base scale of Adam's updates.
+# Adam also maintains adaptive estimates of gradient statistics
+# for each parameter.
+#
+# A learning rate of 0.001 is a common default for Adam and
+# was a reasonable starting point for this LSTM baseline.
+#
+# We did not conduct a learning-rate search. Therefore,
+# we cannot claim that 0.001 is the best possible choice.
 LEARNING_RATE = 0.001
 
-# Number of complete passes through the training dataset, i.e. the model cycles through the entire training dataset exactly 10 times. 
-# 10 epochs is a brief, diagnostic run. For complex tasks, deep learning models often train for 50, 100, or hundreds of epochs. 
-# Choosing 10 means this is a quick baseline test. It lets the researchers see if the model can learn without wasting hours of compute time.
+# Number of training epochs.
+#
+# One epoch is one complete pass through the training subset.
+# NUM_EPOCHS = 10 means that we trained the LSTM for ten
+# passes through its training data.
+#
+# We chose ten epochs to establish a manageable recurrent
+# baseline within the project's computational budget.
+#
+# This does not guarantee convergence. More training might
+# improve, worsen, or leave test accuracy unchanged.
+#
+# We did not perform an extended-training LSTM experiment,
+# so the LSTM and Transformer do not have equal training
+# budgets in our final comparison.
 NUM_EPOCHS = 10
 
-# Reserve 10% of the official training file for validation.
-# The remaining 90% is used for gradient-based training.
+# Validation fraction.
+#
+# We reserve 10% of each official SCAN training file for
+# validation and use the remaining 90% for weight updates.
+#
+# Validation loss helps us choose a checkpoint without
+# selecting model weights based on official test accuracy.
+#
+# Validation examples are drawn from the official training
+# split, so they do not necessarily represent the same
+# distribution shift as the official SCAN test set.
 VALIDATION_FRACTION = 0.10
 
-# Maximum allowed gradient norm. Gradient clipping reduces the risk of 
-# unstable updates when training recurrent neural networks (exploding gradients).
-# Standard choice kept identical to the LSTM configuration. Caps the size of gradients 
-# during backpropagation to keep them from growing too large. Maximum total length (magnitude) 
-# of the combined gradient vector cannot exceed 1.0
+# Gradient clipping.
+#
+# Backpropagation produces a gradient for each trainable
+# parameter. Very large gradients can cause unstable updates.
+#
+# clip_grad_norm_ limits the combined norm of the gradients
+# to a specified maximum before the optimizer step.
+#
+# GRADIENT_CLIP = 1.0 means that if the combined gradient
+# norm exceeds 1.0, PyTorch rescales the gradients.
+# If the norm is already below 1.0, they are left unchanged.
+#
+# This is a common precaution for recurrent-network training.
+# It does not guarantee stable learning or directly cap
+# the size of the final Adam parameter update.
 GRADIENT_CLIP = 1.0
+
 
 # 3. Training/validation function;
 
@@ -208,16 +332,31 @@ def run_one_epoch(
     # Determine which phase we are running.
     training = optimizer is not None
 
-    # Set the PyTorch model to the correct mode.
-    # model.train(True): Training mode.
-    # model.train(False): Evaluation mode.
-    # Our current LSTM does not use dropout, but keeping this distinction is 
-    # good practice and matters for models containing dropout or batch normalization.
-    # We omitted dropout to maintain a clean, minimalist baseline because. While poor test performance can sometimes stem 
-    # from overfitting (memorizing training data rather than learning general rules), SCAN's generalization failures 
-    # (models often achieve near-perfect training accuracy yet completely fail on longer sequences or novel combinations) are 
-    # driven by structural compositional bottlenecks that regularization cannot fix.
+    # Set training or evaluation mode.
+    #
+    # During training, model.train(True) enables the training
+    # behavior of modules such as dropout and batch normalization.
+    # During validation, model.train(False) switches those modules
+    # to their evaluation behavior.
+    #
+    # Our implemented single-layer LSTM does not use dropout,
+    # but explicitly setting the correct mode is still good
+    # PyTorch practice and makes the training procedure clearer.
+    #
+    # We kept the LSTM baseline simple and did not introduce
+    # dropout as an additional hyperparameter.
+    #
+    # Dropout can help regularize some models, but it does not
+    # guarantee systematic generalization. Conversely, we
+    # cannot conclude from our results that dropout would
+    # have been useless for this LSTM.
+    #
+    # The poor length and add-jump results could reflect
+    # several factors, including the architecture, training
+    # distribution, optimization, and decoding behavior.
+    # Our experiments did not isolate their individual effects.
     model.train(training)
+
 
     # We will accumulate the total loss across all real output-token positions in the epoch.
     total_weighted_loss = 0.0
