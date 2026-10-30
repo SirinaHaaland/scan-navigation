@@ -81,12 +81,9 @@ class SinusoidalPositionalEncoding(nn.Module):
         positional_table[:, 0::2] = torch.sin(positions * frequencies)
         positional_table[:, 1::2] = torch.cos(positions * frequencies)
 
-        # Add a leading singleton batch dimension:
-        # (max_length, D) -> (1, max_length, D).
-        # It registers the positional table as a non-trainable, 
-        # non-persistent buffer with a leading batch dimension of one, 
-        # allowing it to move to the GPU with the model and automatically 
-        # broadcast across different batch sizes during addition.
+        # Add a leading singleton batch dimension: (max_length, D) -> (1, max_length, D).
+        # It registers the positional table as a non-trainable, non-persistent buffer with a leading batch dimension of one, 
+        # allowing it to move to the GPU with the model and automatically broadcast across different batch sizes during addition.
         self.register_buffer(
             "positional_table",
             positional_table.unsqueeze(0),
@@ -142,7 +139,10 @@ class TransformerSeq2Seq(nn.Module):
         input_pad_id=0,
         output_pad_id=0,
         max_length=512,
-        norm_first=False, # added configurable norm_first parameter
+        norm_first=False, # added configurable norm_first parameter. True (Pre-LN) for v3 
+        # applies normalization before attention and feedforward blocks. False (v1 and v2), 
+        # creating a cleaner gradient flow that prevents 
+        # instability when training a Transformer from scratch
     ):
         super().__init__()
 
@@ -182,8 +182,7 @@ class TransformerSeq2Seq(nn.Module):
             model_dim,
             padding_idx=output_pad_id,
         )
-    # Instantiate the positional encoding module to inject sequence order 
-    # information into the source/target embeddings.
+    # Instantiate the positional encoding module to inject sequence order information into the source/target embeddings.
         self.input_positions = SinusoidalPositionalEncoding(
             model_dim, max_length
         )
@@ -205,7 +204,7 @@ class TransformerSeq2Seq(nn.Module):
         # Layer normalization scales features to stabilize training. Setting norm_first=True (Pre-LN) 
         # for Transformer v3 applies normalization before attention and feedforward blocks rather than 
         # after (norm_first=False, used in v1 and v2), creating a cleaner gradient flow that prevents 
-        # instability when training a Transformer from scratch
+        # instability when training a Transformer from scratch.
 
         # Encoder self-attention sees the full input command.
         # Decoder self-attention must be causally masked.
@@ -221,16 +220,11 @@ class TransformerSeq2Seq(nn.Module):
             norm_first=norm_first, # False in Transformer v1 and v2, True for v3, configurable (True) for v4
         )
 
-        # Linear layer that projects the decoder's feature 
-        # vectors into raw scores (logits) for every possible 
-        # token in the output vocabulary. linear because it 
-        # performs a linear transformation by multiplying the 
-        # input feature vectors by a matrix of learned weights 
-        # and adding a bias term (a learnable vector added to 
-        # the linear output that prevents zero-vectors (like 
-        # padding tokens) from being permanently stuck at zero 
-        # while simultaneously providing a score boost to 
-        # frequent words across the vocabulary.
+        # Linear layer that projects the decoder's feature vectors into raw scores (logits) for every possible 
+        # token in the output vocabulary. Linear because it performs a linear transformation by multiplying the 
+        # input feature vectors by a matrix of learned weights and adding a bias term (a learnable vector added to 
+        # the linear output that prevents zero-vectors (like padding tokens) from being permanently stuck at zero 
+        # while simultaneously providing a score boost to frequent words across the vocabulary.
         self.output_projection = nn.Linear(
             model_dim, output_vocab_size
         )
@@ -321,10 +315,8 @@ class TransformerSeq2Seq(nn.Module):
             src_key_padding_mask=source_padding_mask,
         )
 
-        # It returns the encoded memory vectors containing the 
-        # processed input features along with the padding mask 
-        # so the decoder knows which blank placeholder positions 
-        # to ignore during attention.
+        # It returns the encoded memory vectors containing the processed input features along with the padding mask 
+        # so the decoder knows which blank placeholder positions to ignore during attention.
         return memory, source_padding_mask
 
     def decode(self, target_prefix_ids, memory, source_padding_mask):
@@ -397,10 +389,8 @@ class TransformerSeq2Seq(nn.Module):
         """
         memory, source_padding_mask = self.encode(source_ids)
 
-        # Returns the raw prediction scores for every possible word in the 
-        # vocabulary, calculated by taking the encoded source memory and 
-        # passing it along with the teacher-forced target inputs through 
-        # the decoder and output projection layers.
+        # Returns the raw prediction scores for every possible word in the vocabulary, calculated by taking the encoded source 
+        # memory and passing it along with the teacher-forced target inputs through the decoder and output projection layers.
         return self.decode(
             decoder_input_ids,
             memory,
