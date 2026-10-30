@@ -139,10 +139,20 @@ class TransformerSeq2Seq(nn.Module):
         input_pad_id=0,
         output_pad_id=0,
         max_length=512,
-        norm_first=False, # added configurable norm_first parameter. True (Pre-LN) for v3 
-        # applies normalization before attention and feedforward blocks. False (v1 and v2), 
-        # creating a cleaner gradient flow that prevents 
-        # instability when training a Transformer from scratch
+        
+        # Selects the placement of layer normalization.
+        #
+        # False = Post-LN: normalize after a residual sublayer.
+        # True  = Pre-LN: normalize before a residual sublayer.
+        #
+        # V1 and V2 used False; V3 and V4 used True.
+        # Pre-LN can improve gradient propagation and optimization
+        # in some settings, but it does not guarantee stable
+        # training or systematic generalization.
+        #
+        # This is the constructor default. The training script
+        # passes the selected value when creating the model.
+        norm_first=False,
     ):
         super().__init__()
 
@@ -190,25 +200,52 @@ class TransformerSeq2Seq(nn.Module):
             model_dim, max_length
         )
 
-        # Instantiiate dropout layer randomly zeroing out embedding features during training to prevent overfitting.
-        self.embedding_dropout = nn.Dropout(dropout) 
 
-        # nn.Transformer is an encoder-decoder Transformer, not a pretrained
-        # model. All its attention and feedforward weights are initialized
-        # when this class is constructed. Batch size (B), source/target sequence 
-        # length (S)/(T), and model dimension (D) together define the 3D shape of 
-        # the input tensors. Setting batch_first=True puts the batch dimension (number 
-        # of independent data samples) first to efficiently process multiple sequences 
-        # of varying lengths in parallel.
+        # Dropout on the combined token and position embeddings.
+        #
+        # After adding positional information to a token embedding,
+        # we apply dropout during training.
+        #
+        # With dropout=0.1, individual activation values are
+        # randomly set to zero with probability 0.1.
+        #
+        # This can reduce reliance on particular features and
+        # may help regularization, but it does not guarantee
+        # less overfitting or better SCAN generalization.
+        #
+        # During evaluation, dropout is disabled by model.eval().
+        self.embedding_dropout = nn.Dropout(dropout)
 
-        # Layer normalization scales features to stabilize training. Setting norm_first=True (Pre-LN) 
-        # for Transformer v3 applies normalization before attention and feedforward blocks rather than 
-        # after (norm_first=False, used in v1 and v2), creating a cleaner gradient flow that prevents 
-        # instability when training a Transformer from scratch.
 
-        # Encoder self-attention sees the full input command.
-        # Decoder self-attention must be causally masked.
-        # Decoder cross-attention sees encoder representations.
+
+        # Core encoder-decoder Transformer.
+        #
+        # nn.Transformer provides the Transformer architecture,
+        # including encoder self-attention, decoder self-attention,
+        # cross-attention, feedforward layers, residual connections,
+        # and layer normalization.
+        #
+        # It does not provide pretrained language-model weights.
+        # The model is initialized for training on SCAN from scratch.
+        #
+        # Encoder self-attention can use the complete input command.
+        # Decoder self-attention uses a causal mask so that a
+        # prediction cannot depend on future output positions.
+        # Decoder cross-attention uses information produced by
+        # the encoder when generating action tokens.
+        #
+        # batch_first=True means the model expects tensors shaped
+        # (batch_size, sequence_length, model_dimension).
+        #
+        # norm_first selects normalization placement:
+        # False -> Post-LN, used by V1 and V2.
+        # True  -> Pre-LN, used by V3 and V4.
+        #
+        # Pre-LN was tested because it can make optimization easier
+        # in some Transformer configurations. It improved the
+        # results of our implementation, but does not guarantee
+        # better performance in every setting.
+
         self.transformer = nn.Transformer(
             d_model=model_dim,
             nhead=num_heads,
@@ -220,14 +257,36 @@ class TransformerSeq2Seq(nn.Module):
             norm_first=norm_first, # False in Transformer v1 and v2, True for v3, configurable (True) for v4
         )
 
-        # Linear layer that projects the decoder's feature vectors into raw scores (logits) for every possible 
-        # token in the output vocabulary. Linear because it performs a linear transformation by multiplying the 
-        # input feature vectors by a matrix of learned weights and adding a bias term (a learnable vector added to 
-        # the linear output that prevents zero-vectors (like padding tokens) from being permanently stuck at zero 
-        # while simultaneously providing a score boost to frequent words across the vocabulary.
+
+        # Output projection from decoder features to token scores.
+        #
+        # At each output position, the Transformer decoder produces
+        # a vector with model_dim features (128 in our experiments).
+        #
+        # This linear layer maps that vector to one raw score,
+        # called a logit, for each token in the output vocabulary.
+        #
+        # For example, the output vocabulary may include I_JUMP,
+        # I_WALK, I_TURN_LEFT, <EOS>, and other action symbols.
+        #
+        # A higher logit indicates that the model currently assigns
+        # greater preference to that token relative to the others.
+        # Logits are not probabilities by themselves.
+        #
+        # During training, cross-entropy loss compares the logits
+        # with the correct next-token ID. PyTorch's cross-entropy
+        # handles the necessary log-softmax calculation internally.
+        #
+        # During greedy evaluation, the model selects the token
+        # with the highest logit at each generation step.
+        #
+        # The projection has learned weights and a bias, but its
+        # bias should not be interpreted as a special mechanism
+        # for repairing padding tokens or preventing zero vectors.
         self.output_projection = nn.Linear(
             model_dim, output_vocab_size
         )
+        
 
     def embed_source(self, source_ids): # Embedding happens here
         """ transforms token IDs into feature vectors.
@@ -239,9 +298,24 @@ class TransformerSeq2Seq(nn.Module):
         into a continuous vector required for neural network computations."""
         vectors = self.input_embedding(source_ids)
 
-        # This step scales the embedding values to balance their size
-        # so that the word vectors do not overpower the position information 
-        # added right after, ensuring both signals remain equally strong for the model. 
+
+        # Scale learned token embeddings by sqrt(model_dim).
+        #
+        # The model combines two types of information:
+        # 1. Learned token embeddings describing token identity.
+        # 2. Fixed sinusoidal positional encodings describing order.
+        #
+        # Scaling the token embeddings by sqrt(model_dim) is a
+        # design convention used in the original Transformer
+        # architecture. It adjusts the magnitude of the learned
+        # embeddings before positional information is added.
+        #
+        # This does not guarantee that the two signals contribute
+        # equally, because the learned embedding values can change
+        # during training.
+        #
+        # We retained this convention in all Transformer versions
+        # to keep the embedding procedure consistent.
         vectors = vectors * math.sqrt(self.model_dim)
         vectors = self.input_positions(vectors)
 
