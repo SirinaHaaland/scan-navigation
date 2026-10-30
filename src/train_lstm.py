@@ -22,12 +22,30 @@ from lstm_model import LSTMSeq2Seq
 
 
 def main():
-    # Fixes the random number generator seed so that model weight 
-    # initialization and data shuffling are identical every time 
-    # you run the script (ensuring reproducibility).
-    # The data is shuffled to prevent the model from memorizing the 
-    # order of the training samples and to ensure it learns general patterns instead
+
+    # Set the PyTorch random seed for this development script.
+    #
+    # PyTorch uses randomness when initializing model parameters
+    # and, depending on the DataLoader configuration, when
+    # determining the order of shuffled training examples.
+    #
+    # Fixing the seed makes these choices more repeatable.
+    # However, it does not guarantee identical numerical
+    # results across all GPUs and software environments.
+    #
+    # Shuffling training examples is useful because it changes
+    # which examples are grouped together in each mini-batch
+    # and avoids always presenting batches in file order.
+    #
+    # Shuffling does NOT guarantee that the model learns
+    # compositional rules or avoids memorization.
+    #
+    # This script was used as an initial development sanity
+    # check. The reported LSTM experiments use
+    # train_lstm_full.py, which implements the official
+    # split-specific training and validation procedure.
     torch.manual_seed(42)
+
 
     # Use the GPU if PyTorch can access it.
     device = torch.device(
