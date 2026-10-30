@@ -494,10 +494,30 @@ def run_one_epoch(model, loader, loss_function, device, optimizer=None, schedule
                 # that exact layer's internal weights independently.
                 loss.backward()
 
-                # Clip the combined gradient norm to reduce instability (exploding gradients).
-                # The combined gradient norm is a single mathematical value calculated by taking 
-                # the square root of the sum of squared gradients across every single parameter 
-                # in the entire model, representing the overall magnitude/speed of the updates being made.
+
+                # Gradient clipping.
+                #
+                # Backpropagation calculates a gradient for each
+                # trainable parameter. A gradient indicates how
+                # the loss would change for a small change in
+                # that parameter.
+                #
+                # The combined gradient norm summarizes the
+                # overall magnitude of these gradients.
+                #
+                # clip_grad_norm_ checks that norm and rescales
+                # the gradients if it exceeds GRADIENT_CLIP = 1.0.
+                # This can reduce the risk of unusually large
+                # gradients destabilizing training.
+                #
+                # Gradient norm is not exactly the same as the
+                # size or speed of the final parameter update.
+                # Adam uses additional calculations when
+                # converting gradients into parameter updates.
+                #
+                # Clipping is a precaution, not a guarantee
+                # of convergence or better generalization.
+
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(),
                     max_norm=GRADIENT_CLIP,
