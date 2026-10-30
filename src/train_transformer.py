@@ -110,9 +110,6 @@ GRADIENT_CLIP = 1.0
 MODEL_DIM = 128
 NUM_HEADS = 4
 
-MODEL_DIM = 128
-NUM_HEADS = 4
-
 # Number of encoder and decoder layers.
 #
 # The Transformer is an encoder-decoder architecture. The encoder
@@ -148,9 +145,6 @@ NUM_HEADS = 4
 #
 # Our observed results apply specifically to the two-encoder-layer,
 # two-decoder-layer Transformer implemented here.
-NUM_ENCODER_LAYERS = 2
-NUM_DECODER_LAYERS = 2
-
 NUM_ENCODER_LAYERS = 2
 NUM_DECODER_LAYERS = 2
 
@@ -246,7 +240,6 @@ DROPOUT = 0.1
 # the 200-token generation limit serve different purposes.
 MAX_POSITION_LENGTH = 512
 
-
 # Transformer learning rate.
 #
 # Adam is the optimizer used to update the model's parameters.
@@ -312,17 +305,6 @@ WARMUP_STEPS = 1000
 # our chosen model, seed, and training budget.
 MIN_LEARNING_RATE = 0.00005
 
-LEARNING_RATE = 0.0005
-
-# V4: start with a small learning rate, then increase it linearly.
-WARMUP_STEPS = 1000
-
-# V4: the learning rate approaches this value by the end of training.
-# Means the model spends its first 1,000 batch updates gradually scaling up its learning rate from near-zero to its peak, 
-# preventing chaotic, large weight adjustments while the attention heads are still randomly initialized at the beginning of training.
-MIN_LEARNING_RATE = 0.00005
-
-
 # Layer-normalization placement.
 #
 # Layer normalization is used inside Transformer layers to
@@ -361,8 +343,6 @@ MIN_LEARNING_RATE = 0.00005
 # The default below is True. The training script also
 # accepts a command-line normalization setting, allowing
 # Post-LN and Pre-LN experiments without changing this code.
-NORM_FIRST = True
-
 NORM_FIRST = True
 
 def learning_rate_at_step(
