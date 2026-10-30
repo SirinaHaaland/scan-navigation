@@ -68,70 +68,250 @@ EARLY_STOPPING_PATIENCE = 10
 VALIDATION_FRACTION = 0.10
 GRADIENT_CLIP = 1.0
 
-# Transformer architecture.
-# Four Attention Heads (4 Heads): Heads allow the model to focus on different parts of the sentence at the exact same time. 
-# With 4 heads, the model can multi-task its focus. One head can keep track of the action verb ("pick up"), another focuses
-# on the object ("blue mug"), and a third focuses on the destination ("the couch").
-# Standard PyTorch Transformers use 8 heads for a model dimension of 512. When you reduce the model dimension to 128, 
-# lowering the attention heads to 4 is standard practice to keep the head dimension (128 / 4 = 32) mathematically stable, 
-# i.e. when a word enters the Transformer as a single 128-dimensional vector, the model mathematically chops that vector 
-# into 4 separate 32-dimensional slices so that each attention head can look at its own dedicated slice simultaneously. 
-# In the LSTM as soon as the 64 sized word embeddings enter the LSTM layer, they are mathematically transformed and processed 
-# inside a 128-dimensional hidden/cell state space, the actual "thinking" and "remembering" (processing) capacity of the LSTM is 128. 
-# In the Transformer everything is unified at 128. There is no separate hidden layer size. The model dimension (128) dictates everything 
-# from start to finish, i.e. each word's embedding is immediately projected into a 128-dimensional vector, and it stays 128 as it flows 
-# through the layers and attention heads. We matched the dimensions for a fair comparison, i.e. we are matching the maximum processing 
-# width (the "brain size") of the models. By setting the LSTM's hidden state to 128 and the Transformer's model dimension to 128, we
-# ensure that both models use vectors of exactly 128 numbers to perform their heaviest internal calculations.
+# Transformer model dimension and attention heads.
+#
+# MODEL_DIM = 128 means that each input token is represented by a vector
+# containing 128 numerical features inside the Transformer. For example,
+# the word "jump" is first converted from a token ID into a learned vector.
+# The vector is then combined with positional information so that the
+# model can distinguish where tokens occur in the command.
+#
+# NUM_HEADS = 4 means that each multi-head attention layer uses four
+# attention heads. Each head can learn a different way of relating tokens
+# to one another. For example, when processing a SCAN command, one head
+# might learn relationships involving an action such as "jump", while
+# another might become sensitive to words such as "twice" or "after".
+# These are possible learned behaviors, not roles assigned to heads
+# in advance. We did not inspect attention maps to verify that specific
+# heads learned specific grammatical functions.
+#
+# Because the model dimension is 128 and there are four heads, each head
+# uses a head dimension of 128 / 4 = 32. PyTorch implements this using
+# learned linear projections that create query, key, and value vectors.
+# It is therefore more accurate to describe the heads as learned
+# projections than as simply cutting the original token vector into
+# four independent pieces.
+#
+# We chose a relatively small model dimension and four heads to keep
+# the Transformer computationally manageable for this course project.
+# Four heads satisfy PyTorch's requirement that the model dimension
+# must be divisible by the number of heads.
+#
+# The LSTM baseline also has a hidden dimension of 128, but that does
+# NOT make the two architectures equally large or equally powerful.
+# The LSTM's hidden state and the Transformer's model dimension have
+# different roles, and the architectures have different parameter
+# counts and computational structures.
+#
+# Matching the number 128 makes the internal representation sizes
+# somewhat comparable, but it does not establish a parameter-matched
+# or fully controlled architectural comparison. Our report explicitly
+# acknowledges this limitation.
 MODEL_DIM = 128
 NUM_HEADS = 4
-# 2-4 is the standard starting point for small sequence-to-sequence benchmarks. Layer 1 captures basic relationships (e.g., matching a 
-# verb to a nearby noun), while Layer 2 captures higher-level structure (the overall logic of the multi-step command). In the world of 
-# Transformers (where models like GPT have 12 to 100+ layers), 2 layers is tiny. However, for a command-to-action task, 2 layers usually 
-# provide plenty of depth to outperform a single-layer LSTM without requiring immense computational power. In our study the transformer 
-# performed worse than the LSTM. While adding more layers generally increases a model's capacity, standard Transformers struggle with 
-# compositional generalization on the SCAN dataset regardless of depth, as they tend to overfit to local sequence patterns rather than 
-# learning underlying grammatical rules. Adding layers just makes it overfit faster. Therefore, keeping the model to 2 layers allows for 
-# a fair architectural baseline comparison without introducing unnecessary structural complexity. 
+
+MODEL_DIM = 128
+NUM_HEADS = 4
+
+# Number of encoder and decoder layers.
+#
+# The Transformer is an encoder-decoder architecture. The encoder
+# processes the input navigation command, and the decoder generates
+# the corresponding sequence of symbolic actions.
+#
+# NUM_ENCODER_LAYERS = 2 means that the input representations pass
+# through two Transformer encoder layers. Each encoder layer contains
+# self-attention and a position-wise feedforward network, together
+# with residual connections and layer normalization.
+#
+# NUM_DECODER_LAYERS = 2 means that output representations pass
+# through two decoder layers. A decoder layer includes masked
+# self-attention over the generated action prefix, cross-attention
+# to the encoder output, and a feedforward network.
+#
+# Multiple layers allow the model to transform its representations
+# repeatedly. In principle, this may help it represent relationships
+# involving actions, repetition, and command composition.
+#
+# We selected two layers on each side as a relatively small,
+# manageable Transformer configuration. It is a reasonable baseline
+# for investigating SCAN without making training unnecessarily
+# expensive. It is not a claim that two layers are optimal.
+#
+# More layers would generally increase parameter count and
+# computation. They could improve or worsen performance depending
+# on the optimization settings and the task.
+#
+# We did not compare different Transformer depths. Therefore,
+# we cannot conclude that adding layers would necessarily improve
+# SCAN accuracy, cause overfitting, or make the model worse.
+#
+# Our observed results apply specifically to the two-encoder-layer,
+# two-decoder-layer Transformer implemented here.
 NUM_ENCODER_LAYERS = 2
 NUM_DECODER_LAYERS = 2
-# The Transformer architecture consists of two main encoder and decoder (outer) layers. The feedforward network is a small two-layer neural 
-# network embedded inside each of these layers. First, the attention heads analyze how words relate to one another, and then that output is 
-# immediately passed into the internal, two-layer neural feedforward network. When a 128-dimensional word vector enters this sub-network, 
-# the first internal layer expands it up to 256 dimensions to allow the model more mathematical space to calculate complex features, and the 
-# second internal layer immediately squashes it back down to 128 dimensions. We chose a 256-dimensional expansion instead of the standard 
-# 512-dimensional one to intentionally limit the model capacity, reducing the total parameter count and preventing the model from easily 
-# overfitting to the simple, repetitive grammar rules of the command dataset. Model capacity refers to the maximum amount of information and 
-# patterns a neural network can memorize, which is determined by its total number of trainable weights and biases (parameters). We intentionally 
-# limit these parameters because if the model has too much memory capacity, it will simply memorize the exact, repetitive training commands by 
-# heart (overfitting) rather than learning the generalized grammatical rules needed to solve new, unseen command combinations.
-FEEDFORWARD_DIM = 256
-# While we omitted dropout in the LSTM because it cannot fix structural compositional generalization, a mild dropout of 0.1 is included in the Transformer 
-# to regularize its high-capacity attention weights and prevent local pattern memorization during training.
-# Unlike the LSTM where poor performance stems from a structural inability to compose rules rather than simple memorization, Transformers are high-capacity 
-# models that can easily "cheat" by memorizing exact training sentences. A mild dropout (0.1) randomly turns off connections during training, acting like a 
-# mental distraction that forces the model to learn general patterns across multiple pathways instead of relying on rote memorization.
-DROPOUT = 0.1
-# Sets the maximum sequence length supported by the Transformer's positional embeddings, determining how long an input command or output action 
-# sequence can be before the model runs out of pre-computed position vectors. Transformers read all words in parallel and have no built-in 
-# sense of word order, and rely on a table of unique "pre-computed position vectors" (one vector for each position index up to MAX_POSITION_LENGTH) 
-# that are added directly to the word embeddings so the model knows which word comes first, second, third, etc. We chose 512 as a standard power-of-two 
-# default because SCAN sequences are short (rarely exceeding a few dozen tokens), providing a generous safety margin for longer length-split test 
-# sequences without wasting computational memory.
-MAX_POSITION_LENGTH = 512 
 
-# Optimization: an initial Transformer learning rate.
-# Only LEARNING_RATE = 0.0005 used for v1, v2 and v3, whilst
-# a linear warmup followed by cosine decay added for v4 to
-# allow the attention heads to properly stabilize early on, 
-# for trying to improve length and compositional generalization.
-# For v4 0.0005 is max learning rate, reached at end of warmup
-# 0.001 is standard for LSTMs, whilst Transformers are highly sensitive and prone to training instability. 
-# Cutting the learning rate in half to 0.0005 is a standard optimization choice, necessary to prevent the 
-# model's mathematical weights from exploding or destabilizing early in training. If the learning rate is too high, 
-# the model takes giant leaps. It trains very fast, but it will likely overshoot the perfect solution, bounce around 
-# chaotically, and fail to learn. If the learning rate is too low, the model takes tiny, microscopic baby steps. 
-# Training becomes incredibly stable, but it will take way too long to learn, or it might get stuck in a bad spot early on.
+NUM_ENCODER_LAYERS = 2
+NUM_DECODER_LAYERS = 2
+
+# Feedforward dimension inside each Transformer layer.
+#
+# In addition to attention, each encoder and decoder layer contains
+# a position-wise feedforward neural network. This network processes
+# the representation at each sequence position using learned weights.
+#
+# With MODEL_DIM = 128 and FEEDFORWARD_DIM = 256, the feedforward
+# network first maps a 128-dimensional representation to 256
+# dimensions, applies a nonlinear activation, and then maps it
+# back to 128 dimensions.
+#
+# The larger intermediate representation gives the network space
+# to learn nonlinear transformations of the information produced
+# by attention. The same feedforward weights are applied at every
+# token position within a given Transformer layer.
+#
+# We chose 256 to keep the network relatively small and to reduce
+# the number of trainable parameters compared with a larger
+# feedforward dimension such as 512.
+#
+# A smaller network can be faster and use less memory. However,
+# reducing model size does not automatically prevent overfitting
+# or improve systematic generalization. A smaller model may also
+# have less capacity to learn the task.
+#
+# We did not run a feedforward-dimension comparison, so 256 should
+# be understood as a practical design choice rather than a
+# demonstrated optimal value.
+#
+# The important experimental question is whether this particular
+# model learns SCAN composition rules, not simply how many
+# parameters it contains.
+FEEDFORWARD_DIM = 256
+
+# Dropout regularization.
+#
+# DROPOUT = 0.1 means that, during training, dropout randomly sets
+# some activations to zero with probability 0.1. This introduces
+# noise into the network's internal representations and can reduce
+# its reliance on particular activation patterns.
+#
+# In this implementation, dropout is used in the Transformer
+# components and on the combined token/position embeddings.
+# During evaluation, dropout is disabled by model.eval(), so
+# predictions do not involve random dropout masks.
+#
+# We selected 0.1 as a modest regularization setting commonly
+# used in Transformer implementations. It provides some
+# regularization without discarding a large fraction of activations.
+#
+# Dropout may help reduce overfitting, but it does not force the
+# model to learn compositional rules. A network can still perform
+# well on familiar examples and fail on the SCAN length or
+# add-jump splits even when dropout is used.
+#
+# Our LSTM baseline did not use dropout. This kept the recurrent
+# baseline simple; it does not mean that dropout is useless for
+# LSTMs or that the LSTM's errors have a proven single cause.
+#
+# We did not conduct a dropout ablation, so we cannot attribute
+# the Transformer's results specifically to the value 0.1.
+DROPOUT = 0.1
+
+# Maximum length of the sinusoidal positional encoding table.
+#
+# Self-attention does not inherently identify whether a token is
+# first, second, or later in a sequence. Therefore, we add a
+# positional encoding to each token embedding.
+#
+# Our implementation uses fixed sinusoidal positional encodings.
+# These are calculated using sine and cosine functions rather than
+# learned separately for each position.
+#
+# MAX_POSITION_LENGTH = 512 means that the implementation prepares
+# positional vectors for positions 0 through 511. The model can
+# therefore represent input or decoder-prefix positions up to this
+# configured limit without running out of positional vectors.
+#
+# This is a technical capacity limit of the implementation, not
+# the number of positions that the model has learned to handle
+# correctly. Having positional encodings for 512 positions does
+# NOT guarantee successful generation of 512 action tokens.
+#
+# We chose 512 as a generous limit for the relatively short SCAN
+# commands and action sequences, including the longer examples
+# used in the length-generalization experiment.
+#
+# The evaluation script separately limits autoregressive generation
+# to 200 tokens by default. The 512-position encoding limit and
+# the 200-token generation limit serve different purposes.
+MAX_POSITION_LENGTH = 512
+
+
+# Transformer learning rate.
+#
+# Adam is the optimizer used to update the model's parameters.
+# The learning rate controls the overall scale of these updates.
+# Adam also adapts updates using estimates of the first and second
+# moments of the gradients, so it is not simply a fixed-size
+# gradient-descent step.
+#
+# We selected 0.0005 for the initial Transformer experiments.
+# This is a plausible learning rate for a small Transformer
+# trained from scratch, but it is not the only valid choice.
+#
+# V1, V2, and V3 use a constant learning rate of 0.0005.
+# Their learning rates do not automatically decrease with epochs.
+#
+# A learning rate that is too high may make optimization unstable
+# or prevent convergence. A learning rate that is too low may
+# make learning unnecessarily slow. However, our experiments
+# did not systematically compare constant learning-rate values.
+#
+# Therefore, we cannot claim that 0.0005 was necessary or
+# optimal. It was a fixed experimental choice.
+LEARNING_RATE = 0.0005
+
+# Warmup steps for the V4 experiment.
+#
+# V4 changes the learning-rate schedule while retaining the
+# Pre-LN Transformer architecture used in V3.
+#
+# During warmup, the learning rate increases approximately
+# linearly from a small initial value toward the peak value
+# LEARNING_RATE = 0.0005.
+#
+# The purpose of trying warmup was to investigate whether
+# smaller parameter updates early in training would improve
+# optimization before the model reached the full learning rate.
+# Warmup is a commonly used technique, but it is not guaranteed
+# to improve every Transformer training run.
+#
+# We chose 1,000 optimizer steps as the tested warmup duration.
+# An optimizer step occurs after a training batch updates the
+# model weights; it is not the same as one epoch.
+#
+# We did not compare different warmup durations.
+WARMUP_STEPS = 1000
+
+# Minimum learning rate for V4's cosine-decay schedule.
+#
+# After warmup, the learning rate decreases according to a
+# cosine-shaped curve toward 0.00005 by the planned end
+# of training.
+#
+# The idea was to allow larger updates earlier and smaller
+# updates later, potentially helping the model refine its
+# parameters as training progressed.
+#
+# In our experiment, this particular warmup-and-decay schedule
+# performed worse than V3's constant learning rate on the
+# random split: 14.25% versus 29.51% exact-match accuracy.
+#
+# This does not show that all learning-rate schedules are bad.
+# It shows only that this specific schedule did not help under
+# our chosen model, seed, and training budget.
+MIN_LEARNING_RATE = 0.00005
+
 LEARNING_RATE = 0.0005
 
 # V4: start with a small learning rate, then increase it linearly.
@@ -142,13 +322,47 @@ WARMUP_STEPS = 1000
 # preventing chaotic, large weight adjustments while the attention heads are still randomly initialized at the beginning of training.
 MIN_LEARNING_RATE = 0.00005
 
-# V4 uses the same Pre-LN architecture as v3.
-# NORM_FIRST = True configures the Transformer to apply layer normalization before each attention and feedforward sub-layer (Pre-LN) 
-# rather than after them, which significantly stabilizes gradient flow and training dynamics right from the start.
-# 2. Post-LN vs. Pre-LN Layer Normalization (V3): Layer Normalization keeps data values stable so they don't blow up during training. 
-# Post-LN normalizes after the attention/feedforward steps and often creates a "vanishing gradient" problem, making it incredibly hard 
-# for the earliest layers of the network to learn. Pre-LN normalizes before those steps and creates a direct, unobstructed highway for 
-# data to flow through the network. This makes the model much more stable and easier to train without needing a hyper-specific learning rate.
+
+# Layer-normalization placement.
+#
+# Layer normalization is used inside Transformer layers to
+# normalize feature values and support optimization.
+#
+# In Post-LN, normalization is applied after the attention
+# or feedforward sublayer and its residual connection.
+# In Pre-LN, normalization is applied before the sublayer.
+#
+# PyTorch's nn.Transformer uses the parameter norm_first
+# to select between these configurations:
+#
+# norm_first=False -> Post-LN
+# norm_first=True  -> Pre-LN
+#
+# Transformer V1 and V2 used Post-LN.
+# Transformer V3 and V4 used Pre-LN.
+#
+# Pre-LN can improve gradient propagation through residual
+# connections and make some Transformer configurations easier
+# to optimize. This is a reason to investigate it, not a
+# guarantee that it always trains better.
+#
+# We introduced Pre-LN in V3 because V2 still had low
+# exact-match accuracy after 50 epochs.
+#
+# In our recorded experiments, V3 improved random-split
+# accuracy from 10.52% (V2) to 29.51%. Length accuracy
+# increased from 0.31% to 0.84%, and add-jump accuracy
+# increased from 0.00% to 0.01%.
+#
+# These results are consistent with Pre-LN helping this
+# implementation, but we used only one seed and did not
+# establish that normalization alone explains every change.
+#
+# The default below is True. The training script also
+# accepts a command-line normalization setting, allowing
+# Post-LN and Pre-LN experiments without changing this code.
+NORM_FIRST = True
+
 NORM_FIRST = True
 
 def learning_rate_at_step(
