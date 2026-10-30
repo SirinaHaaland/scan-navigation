@@ -69,13 +69,56 @@ VALIDATION_FRACTION = 0.10
 GRADIENT_CLIP = 1.0
 
 # Transformer architecture.
+# Four Attention Heads (4 Heads): Heads allow the model to focus on different parts of the sentence at the exact same time. 
+# With 4 heads, the model can multi-task its focus. One head can keep track of the action verb ("pick up"), another focuses
+# on the object ("blue mug"), and a third focuses on the destination ("the couch").
+# Standard PyTorch Transformers use 8 heads for a model dimension of 512. When you reduce the model dimension to 128, 
+# lowering the attention heads to 4 is standard practice to keep the head dimension (128 / 4 = 32) mathematically stable, 
+# i.e. when a word enters the Transformer as a single 128-dimensional vector, the model mathematically chops that vector 
+# into 4 separate 32-dimensional slices so that each attention head can look at its own dedicated slice simultaneously. 
+# In the LSTM as soon as the 64 sized word embeddings enter the LSTM layer, they are mathematically transformed and processed 
+# inside a 128-dimensional hidden/cell state space, the actual "thinking" and "remembering" (processing) capacity of the LSTM is 128. 
+# In the Transformer everything is unified at 128. There is no separate hidden layer size. The model dimension (128) dictates everything 
+# from start to finish, i.e. each word's embedding is immediately projected into a 128-dimensional vector, and it stays 128 as it flows 
+# through the layers and attention heads. We matched the dimensions for a fair comparison, i.e. we are matching the maximum processing 
+# width (the "brain size") of the models. By setting the LSTM's hidden state to 128 and the Transformer's model dimension to 128, we
+# ensure that both models use vectors of exactly 128 numbers to perform their heaviest internal calculations.
 MODEL_DIM = 128
 NUM_HEADS = 4
+# 2-4 is the standard starting point for small sequence-to-sequence benchmarks. Layer 1 captures basic relationships (e.g., matching a 
+# verb to a nearby noun), while Layer 2 captures higher-level structure (the overall logic of the multi-step command). In the world of 
+# Transformers (where models like GPT have 12 to 100+ layers), 2 layers is tiny. However, for a command-to-action task, 2 layers usually 
+# provide plenty of depth to outperform a single-layer LSTM without requiring immense computational power. In our study the transformer 
+# performed worse than the LSTM. While adding more layers generally increases a model's capacity, standard Transformers struggle with 
+# compositional generalization on the SCAN dataset regardless of depth, as they tend to overfit to local sequence patterns rather than 
+# learning underlying grammatical rules. Adding layers just makes it overfit faster. Therefore, keeping the model to 2 layers allows for 
+# a fair architectural baseline comparison without introducing unnecessary structural complexity. 
 NUM_ENCODER_LAYERS = 2
 NUM_DECODER_LAYERS = 2
+# The Transformer architecture consists of two main encoder and decoder (outer) layers. The feedforward network is a small two-layer neural 
+# network embedded inside each of these layers. First, the attention heads analyze how words relate to one another, and then that output is 
+# immediately passed into the internal, two-layer neural feedforward network. When a 128-dimensional word vector enters this sub-network, 
+# the first internal layer expands it up to 256 dimensions to allow the model more mathematical space to calculate complex features, and the 
+# second internal layer immediately squashes it back down to 128 dimensions. We chose a 256-dimensional expansion instead of the standard 
+# 512-dimensional one to intentionally limit the model capacity, reducing the total parameter count and preventing the model from easily 
+# overfitting to the simple, repetitive grammar rules of the command dataset. Model capacity refers to the maximum amount of information and 
+# patterns a neural network can memorize, which is determined by its total number of trainable weights and biases (parameters). We intentionally 
+# limit these parameters because if the model has too much memory capacity, it will simply memorize the exact, repetitive training commands by 
+# heart (overfitting) rather than learning the generalized grammatical rules needed to solve new, unseen command combinations.
 FEEDFORWARD_DIM = 256
+# While we omitted dropout in the LSTM because it cannot fix structural compositional generalization, a mild dropout of 0.1 is included in the Transformer 
+# to regularize its high-capacity attention weights and prevent local pattern memorization during training.
+# Unlike the LSTM where poor performance stems from a structural inability to compose rules rather than simple memorization, Transformers are high-capacity 
+# models that can easily "cheat" by memorizing exact training sentences. A mild dropout (0.1) randomly turns off connections during training, acting like a 
+# mental distraction that forces the model to learn general patterns across multiple pathways instead of relying on rote memorization.
 DROPOUT = 0.1
-MAX_POSITION_LENGTH = 512
+# Sets the maximum sequence length supported by the Transformer's positional embeddings, determining how long an input command or output action 
+# sequence can be before the model runs out of pre-computed position vectors. Transformers read all words in parallel and have no built-in 
+# sense of word order, and rely on a table of unique "pre-computed position vectors" (one vector for each position index up to MAX_POSITION_LENGTH) 
+# that are added directly to the word embeddings so the model knows which word comes first, second, third, etc. We chose 512 as a standard power-of-two 
+# default because SCAN sequences are short (rarely exceeding a few dozen tokens), providing a generous safety margin for longer length-split test 
+# sequences without wasting computational memory.
+MAX_POSITION_LENGTH = 512 
 
 # Optimization: an initial Transformer learning rate.
 # Only LEARNING_RATE = 0.0005 used for v1, v2 and v3, whilst
@@ -83,15 +126,29 @@ MAX_POSITION_LENGTH = 512
 # allow the attention heads to properly stabilize early on, 
 # for trying to improve length and compositional generalization.
 # For v4 0.0005 is max learning rate, reached at end of warmup
+# 0.001 is standard for LSTMs, whilst Transformers are highly sensitive and prone to training instability. 
+# Cutting the learning rate in half to 0.0005 is a standard optimization choice, necessary to prevent the 
+# model's mathematical weights from exploding or destabilizing early in training. If the learning rate is too high, 
+# the model takes giant leaps. It trains very fast, but it will likely overshoot the perfect solution, bounce around 
+# chaotically, and fail to learn. If the learning rate is too low, the model takes tiny, microscopic baby steps. 
+# Training becomes incredibly stable, but it will take way too long to learn, or it might get stuck in a bad spot early on.
 LEARNING_RATE = 0.0005
 
 # V4: start with a small learning rate, then increase it linearly.
 WARMUP_STEPS = 1000
 
 # V4: the learning rate approaches this value by the end of training.
+# Means the model spends its first 1,000 batch updates gradually scaling up its learning rate from near-zero to its peak, 
+# preventing chaotic, large weight adjustments while the attention heads are still randomly initialized at the beginning of training.
 MIN_LEARNING_RATE = 0.00005
 
 # V4 uses the same Pre-LN architecture as v3.
+# NORM_FIRST = True configures the Transformer to apply layer normalization before each attention and feedforward sub-layer (Pre-LN) 
+# rather than after them, which significantly stabilizes gradient flow and training dynamics right from the start.
+# 2. Post-LN vs. Pre-LN Layer Normalization (V3): Layer Normalization keeps data values stable so they don't blow up during training. 
+# Post-LN normalizes after the attention/feedforward steps and often creates a "vanishing gradient" problem, making it incredibly hard 
+# for the earliest layers of the network to learn. Pre-LN normalizes before those steps and creates a direct, unobstructed highway for 
+# data to flow through the network. This makes the model much more stable and easier to train without needing a hyper-specific learning rate.
 NORM_FIRST = True
 
 def learning_rate_at_step(
@@ -188,7 +245,8 @@ def run_one_epoch(model, loader, loss_function, device, optimizer=None, schedule
             # masks are constructed directly from PAD token IDs.
             #
             # The LSTM uses input_lengths for pack_padded_sequence().
-            # The Transformer instead uses key-padding masks.
+            # The Transformer instead uses key-padding masks (a boolean matrix passed 
+            # to the Transformer's attention mechanism that tells it to ignore padding tokens.)
             source_ids = source_ids.to(device)
             target_ids = target_ids.to(device)
 
@@ -199,7 +257,9 @@ def run_one_epoch(model, loader, loss_function, device, optimizer=None, schedule
                 optimizer.zero_grad()
 
             # (B, T) -> (B, T, V)
-            # One vocabulary-score vector for each decoder position.
+            # One vocabulary-score vector for each decoder position (a single step along the generated 
+            # output sequence (corresponding to one specific action token), where the model computes a 
+            # score across every possible word in the vocabulary to predict what action should come next.
             logits = model(source_ids, decoder_inputs)
 
             # CrossEntropyLoss expects:
@@ -213,11 +273,17 @@ def run_one_epoch(model, loader, loss_function, device, optimizer=None, schedule
             )
 
             if is_training:
-                # Backpropagation computes gradients for all trainable
-                # embeddings, attention layers, feedforward layers, etc.
+                # Backpropagation computes gradients for all trainable embeddings, attention layers, feedforward layers, etc.
+                # I.e. loss.backward() calculates a unique, customized gradient for every single individual parameter (weight and bias) 
+                # in the network based on how much that specific parameter contributed to the prediction error, and these calculated gradients 
+                # are sent directly back to its specific layer, whether in the embeddings, attention heads, or feedforward networks, to update 
+                # that exact layer's internal weights independently.
                 loss.backward()
 
                 # Clip the combined gradient norm to reduce instability (exploding gradients).
+                # The combined gradient norm is a single mathematical value calculated by taking 
+                # the square root of the sum of squared gradients across every single parameter 
+                # in the entire model, representing the overall magnitude/speed of the updates being made.
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(),
                     max_norm=GRADIENT_CLIP,
@@ -233,7 +299,6 @@ def run_one_epoch(model, loader, loss_function, device, optimizer=None, schedule
 
             # CrossEntropyLoss(ignore_index=PAD) with default reduction="mean"
             # averages over non-PAD positions in this batch.
-            #
             # Multiply by the number of real tokens before accumulating.
             # This ensures the epoch average is weighted by tokens rather
             # than treating a short final batch as equal to a full batch.
@@ -490,11 +555,9 @@ def main():
             ),
         )
 
-# Store model checkpoints separately by experiment version.
-# Example:
+# Store model checkpoints separately by experiment version. Example:
 # checkpoints/transformer_v2_random_best.pt
 # checkpoints/transformer_v2_length_best.pt
-#
     # This does not overwrite the old v1 checkpoints.
     checkpoint_directory = project_root / "checkpoints"
     checkpoint_directory.mkdir(parents=True, exist_ok=True)
@@ -505,7 +568,6 @@ def main():
     )
 
     # Store the learning curves as CSV files.
-    # They can later be plotted in the report.
     history_directory = project_root / "results" / "training_histories"
     history_directory.mkdir(parents=True, exist_ok=True)
 
