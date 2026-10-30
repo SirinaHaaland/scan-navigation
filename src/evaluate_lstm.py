@@ -40,8 +40,9 @@ Result: Incorrect
 
 Generating EOS and knowing when to stop is part of generating the correct action sequence.
 
-This script never updates the model's weights.
-The official test examples are used only for final evaluation.
+The official test examples do not update the model weights
+or determine checkpoint selection. They are used to measure
+test accuracy and inspect prediction errors.
 We also print some incorrect predictions to help investigate
 what types of commands the model struggles with.
 """
