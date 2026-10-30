@@ -241,7 +241,7 @@ if __name__ == "__main__":
     )
 
     inputs, targets, lengths = next(iter(loader))
-
+ # 1. Test the Encoder component independently
     encoder = LSTMEncoder(
         vocab_size=len(input_vocab),
         embedding_dim=64,
@@ -261,7 +261,7 @@ if __name__ == "__main__":
 
     print("Encoder test passed!")
 
-    # Test the complete model. Verify that:
+    # 2. Test the complete sequence-to-sequence model (Encoder + Decoder) Verify that:
     # The encoder accepts padded SCAN commands.
     # The decoder receives the encoder's hidden and cell states.
     # The decoder processes teacher-forced action sequences.    
