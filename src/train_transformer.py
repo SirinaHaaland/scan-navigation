@@ -570,6 +570,17 @@ def main():
         help="Use Pre-LN Transformer (default: Post-LN)",
     )
 
+    parser.add_argument(
+        "--embedding-init",
+        choices=["default", "scaled_normal"],
+        default="default",
+        help=(
+            "Embedding initialization: default for V1-V4, "
+            "scaled_normal for V5"
+        ),
+    )
+
+
     # --lr-schedule constant selects the original fixed learning rate.
     # --lr-schedule warmup_cosine selects the v4 scheduler.
     parser.add_argument(
@@ -710,6 +721,7 @@ def main():
         output_pad_id=output_vocab["<PAD>"],
         max_length=MAX_POSITION_LENGTH,
         norm_first=args.norm_first,
+        embedding_init=args.embedding_init,
     ).to(device)
 
     loss_function = nn.CrossEntropyLoss(
@@ -810,6 +822,7 @@ def main():
     print(f"Maximum epochs: {args.epochs}")
     print(f"Early-stopping patience: {args.patience}")
     print(f"Pre-LN: {args.norm_first}")
+    print(f"Embedding initialization: {args.embedding_init}")
     print(f"LR schedule: {args.lr_schedule}")
     print(f"Peak learning rate: {LEARNING_RATE}")
     print(f"Minimum learning rate: {MIN_LEARNING_RATE}")
@@ -939,6 +952,8 @@ def main():
                     # Record that we kept the original v1
                     # embedding-scaling behavior.
                     "embedding_scaling": "sqrt_model_dim",
+
+                    "embedding_init": args.embedding_init,
 
                     # Training-budget settings.
                     "max_epochs": args.epochs,

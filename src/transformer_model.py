@@ -153,6 +153,7 @@ class TransformerSeq2Seq(nn.Module):
         # This is the constructor default. The training script
         # passes the selected value when creating the model.
         norm_first=False,
+        embedding_init="default",
     ):
         super().__init__()
 
@@ -186,12 +187,42 @@ class TransformerSeq2Seq(nn.Module):
             model_dim,
             padding_idx=input_pad_id,
         )
+        # V1-V4 use the following PyTorch's original embedding initialization:
+        #self.output_embedding = nn.Embedding(
+        #    output_vocab_size,
+        #    model_dim,
+        #    padding_idx=output_pad_id,
+        #)
+        
+# V5 uses smaller initial embedding weights to compensate for
+# the sqrt(model_dim) multiplication in embed_source/embed_target.
+#
+# The forward-pass architecture is unchanged. Only the initial
+# values of the two embedding tables differ.
+# If someone runs the original V3 training command again, they will 
+# still get the original initialization. Only a run explicitly requesting 
+# scaled_normal will use the V5 change.
+if embedding_init not in ("default", "scaled_normal"):
+    raise ValueError(
+        f"Unknown embedding initialization: {embedding_init}"
+    )
 
-        self.output_embedding = nn.Embedding(
-            output_vocab_size,
-            model_dim,
-            padding_idx=output_pad_id,
+if embedding_init == "scaled_normal":
+    for embedding in (
+        self.input_embedding,
+        self.output_embedding,
+    ):
+        nn.init.normal_(
+            embedding.weight,
+            mean=0.0,
+            std=model_dim ** -0.5,
         )
+
+        # Re-zero PAD because normal_ also initializes the PAD row.
+        with torch.no_grad():
+            embedding.weight[embedding.padding_idx].zero_()
+
+
     # Instantiate the positional encoding module to inject sequence order information into the source/target embeddings.
         self.input_positions = SinusoidalPositionalEncoding(
             model_dim, max_length

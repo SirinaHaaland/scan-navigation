@@ -268,6 +268,7 @@ def main():
         # V1 and v2 did not record this setting, and both used Post-LN.
         # V3 and v4 explicitly save True for Pre-LN.
         norm_first=checkpoint.get("norm_first", False),
+        embedding_init=checkpoint.get("embedding_init", "default"),
     ).to(device)
 
     model.load_state_dict(checkpoint["model_state_dict"])
@@ -394,6 +395,10 @@ def main():
     print(f"Split: {args.split}")
     print(f"Experiment version: {args.run_name}")
     print(f"Pre-LN: {checkpoint.get('norm_first', False)}")
+    print(
+    "Embedding initialization: "
+    f"{checkpoint.get('embedding_init', 'default')}"
+    )
     print(f"LR schedule: {checkpoint.get('lr_schedule', 'constant')}")
     print(f"Device: {device}")
     print(f"Checkpoint epoch: {checkpoint['epoch']}")
