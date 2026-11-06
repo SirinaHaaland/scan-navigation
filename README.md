@@ -40,38 +40,45 @@ Each split is treated as an independent experiment. Models are trained only on t
 ## 2. Repository structure
 
 ```text
+
 scan-navigation/
-├── README.md
 ├── .gitignore
-├── src/
-│   ├── dataset.py
-│   ├── data_loader.py
-│   ├── lstm_model.py
-│   ├── train_lstm.py
-│   ├── train_lstm_full.py
-│   ├── evaluate_lstm.py
-│   ├── transformer_model.py
-│   ├── train_transformer.py
-│   └── evaluate_transformer.py
+├── README.md
 ├── Results/
 │   ├── lstm_results.md
 │   └── transformer_results.md
+├── report_and_slides/
+│   └── .gitkeep
 ├── results/
 │   └── training_histories/
-│       ├── transformer_v2_*.csv
-│       ├── transformer_v3_preln_*.csv
+│       ├── transformer_v2_add_jump.csv
+│       ├── transformer_v2_length.csv
+│       ├── transformer_v2_random.csv
+│       ├── transformer_v3_preln_add_jump.csv
+│       ├── transformer_v3_preln_length.csv
+│       ├── transformer_v3_preln_random.csv
 │       ├── transformer_v4_warmup_random.csv
-│       └── transformer_v5_embfix_*.csv
-├── data/
-│   └── scan/                # Download separately
-└── checkpoints/            # Generated during training
+│       ├── transformer_v5_embfix_add_jump.csv
+│       ├── transformer_v5_embfix_length.csv
+│       └── transformer_v5_embfix_random.csv
+└── src/
+    ├── data_loader.py
+    ├── dataset.py
+    ├── evaluate_lstm.py
+    ├── evaluate_transformer.py
+    ├── lstm_model.py
+    ├── train_lstm.py
+    ├── train_lstm_full.py
+    ├── train_transformer.py
+    └── transformer_model.py
+
 ```
 
-`src/train_lstm.py` is an initial development sanity check. The final LSTM experiments use `src/train_lstm_full.py`.
+The `src/` directory contains the data-processing, model, training, and evaluation implementations. `src/train_lstm.py` was used for initial development; the reported LSTM experiments use `src/train_lstm_full.py`.
 
-The `Results/` directory contains experimental records. The lowercase `results/training_histories/` directory contains saved Transformer training and validation histories.
+The `Results/` directory contains the documented LSTM and Transformer experimental results. The lowercase `results/training_histories/` directory contains the committed training histories for Transformer V2–V5. The `report_and_slides/` directory currently contains a `.gitkeep` placeholder.
 
-The downloaded SCAN dataset, trained checkpoints, local Python environment, and Python cache files are excluded from Git.
+The official SCAN dataset must be downloaded separately into `data/scan/`. Training creates the `checkpoints/` directory, and Transformer training saves CSV histories in `results/training_histories/`. The dataset, checkpoints, local Python environment, and Python cache files are excluded from Git.
 
 ## 3. Environment setup
 
