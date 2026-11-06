@@ -182,55 +182,58 @@ class TransformerSeq2Seq(nn.Module):
         # The nn.Embedding layer creates a lookup table that assigns a dense vector 
         # (of size model_dim) to each ID in that vocabulary (ensuring that the vector assigned 
         # to the specified padding ID remains fixed at zero.)
+
+        # Input embeddings convert SCAN command tokens into vectors.
         self.input_embedding = nn.Embedding(
             input_vocab_size,
             model_dim,
             padding_idx=input_pad_id,
         )
-        # V1-V4 use the following PyTorch's original embedding initialization:
-        #self.output_embedding = nn.Embedding(
-        #    output_vocab_size,
-        #    model_dim,
-        #    padding_idx=output_pad_id,
-        #)
-        
-# V5 uses smaller initial embedding weights to compensate for
-# the sqrt(model_dim) multiplication in embed_source/embed_target.
-#
-# The forward-pass architecture is unchanged. Only the initial
-# values of the two embedding tables differ.
-# If someone runs the original V3 training command again, they will 
-# still get the original initialization. Only a run explicitly requesting 
-# scaled_normal will use the V5 change.
-if embedding_init not in ("default", "scaled_normal"):
-    raise ValueError(
-        f"Unknown embedding initialization: {embedding_init}"
-    )
 
-if embedding_init == "scaled_normal":
-    for embedding in (
-        self.input_embedding,
-        self.output_embedding,
-    ):
-        nn.init.normal_(
-            embedding.weight,
-            mean=0.0,
-            std=model_dim ** -0.5,
+        # Output embeddings convert generated action tokens into vectors.
+        # Both embeddings are required for ALL Transformer versions.
+        self.output_embedding = nn.Embedding(
+            output_vocab_size,
+            model_dim,
+            padding_idx=output_pad_id,
         )
 
-        # Re-zero PAD because normal_ also initializes the PAD row.
-        with torch.no_grad():
-            embedding.weight[embedding.padding_idx].zero_()
+        # V1-V4: preserve PyTorch's original embedding initialization.
+        # V5: initialize embeddings with standard deviation 1/sqrt(D).
+        #
+        # Our forward pass multiplies embeddings by sqrt(D).
+        # With scaled_normal, their initial magnitude after that
+        # multiplication is approximately 1 rather than sqrt(D).
+        #
+        # This changes initialization, not the Transformer architecture.
+        if embedding_init not in ("default", "scaled_normal"):
+            raise ValueError(
+                f"Unknown embedding initialization: {embedding_init}"
+            )
 
+        if embedding_init == "scaled_normal":
+            for embedding in (
+                self.input_embedding,
+                self.output_embedding,
+            ):
+                nn.init.normal_(
+                    embedding.weight,
+                    mean=0.0,
+                    std=model_dim ** -0.5,
+                )
 
-    # Instantiate the positional encoding module to inject sequence order information into the source/target embeddings.
+                # Restore the zero vector for the padding token.
+                with torch.no_grad():
+                    embedding.weight[embedding.padding_idx].zero_()
+
+        # Instantiate the positional encoding module to inject sequence order information into the source/target embeddings.
+        # Both V1-V4 and V5 use the same sinusoidal positions.
         self.input_positions = SinusoidalPositionalEncoding(
             model_dim, max_length
         )
         self.output_positions = SinusoidalPositionalEncoding(
             model_dim, max_length
         )
-
 
         # Dropout on the combined token and position embeddings.
         #
