@@ -47,8 +47,6 @@ scan-navigation/
 ├── Results/
 │   ├── lstm_results.md
 │   └── transformer_results.md
-├── report_and_slides/
-│   └── .gitkeep
 ├── results/
 │   └── training_histories/
 │       ├── transformer_v2_add_jump.csv
