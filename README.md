@@ -1,3 +1,4 @@
+
 # SCAN Navigation Instructions
 
 **Deep Neural Networks — Group 6**
@@ -59,7 +60,8 @@ scan-navigation/
 │   └── training_histories/
 │       ├── transformer_v2_*.csv
 │       ├── transformer_v3_preln_*.csv
-│       └── transformer_v4_warmup_random.csv
+│       ├── transformer_v4_warmup_random.csv
+│       └── transformer_v5_embfix_*.csv
 ├── data/
 │   └── scan/                # Download separately
 └── checkpoints/            # Generated during training
@@ -185,18 +187,21 @@ The Transformer uses PyTorch's encoder-decoder `nn.Transformer`, with learned to
 | Random seed | 42 |
 | Trainable parameters | 667,401 |
 
-Four Transformer experiments were conducted:
+Five Transformer experiments were conducted:
 
-| Version | Normalization | Learning-rate strategy | Maximum epochs |
-|---|---|---|---:|
-| V1 | Post-LN | Constant | 10 |
-| V2 | Post-LN | Constant | 50 |
-| V3 | Pre-LN | Constant | 50 |
-| V4 | Pre-LN | Linear warmup + cosine decay | 50 |
+| Version | Normalization | Embedding initialization | Learning-rate strategy | Maximum epochs | Evaluated splits |
+|---|---|---|---|---:|---|
+| V1 | Post-LN | PyTorch default | Constant | 10 | Random, length, add-jump |
+| V2 | Post-LN | PyTorch default | Constant | 50 | Random, length, add-jump |
+| V3 | Pre-LN | PyTorch default | Constant | 50 | Random, length, add-jump |
+| V4 | Pre-LN | PyTorch default | Linear warmup + cosine decay | 50 | Random only |
+| V5 | Pre-LN | Scaled normal (`std=1/sqrt(128)`) | Constant | 50 | Random, length, add-jump |
 
-V2–V4 use early stopping with patience 10. V4 uses 1,000 warmup optimizer steps, followed by cosine decay from `0.0005` toward `0.00005`.
+V2–V5 use early stopping with patience 10. V4 uses 1,000 warmup optimizer steps, followed by cosine decay from `0.0005` toward `0.00005`.
 
-V1–V3 were evaluated on all three official SCAN splits. V4 was evaluated only on the random split.
+V5 changes the initialization of both input and output embedding tables. In V1–V4, the embedding layers use the default PyTorch initialization. In V5, both embedding weight matrices are initialized from a normal distribution with mean zero and standard deviation `model_dim ** -0.5`, and their padding rows are reset to zero.
+
+The forward-pass multiplication of embeddings by `sqrt(model_dim)` is unchanged. The model architecture, parameter count, positional encoding, and other V3 settings are retained in V5.
 
 All models use teacher forcing during training and validation. Checkpoints are selected using the lowest validation loss.
 
@@ -243,6 +248,7 @@ The Transformer training script accepts:
 - `--patience`: early-stopping patience
 - `--run-name`: unique identifier for checkpoint and history filenames
 - `--norm-first`: enable Pre-LN; omitting it selects Post-LN
+- `--embedding-init`: `default` or `scaled_normal`; the default preserves V1–V4 behavior
 - `--lr-schedule`: `constant` or `warmup_cosine`
 
 Use unique reproduction names to avoid overwriting existing checkpoints.
@@ -260,6 +266,7 @@ for split in random length add_jump; do
         --epochs 10 \
         --patience 10 \
         --lr-schedule constant \
+        --embedding-init default \
         --run-name repro_v1
 done
 ```
@@ -287,6 +294,7 @@ for split in random length add_jump; do
         --epochs 50 \
         --patience 10 \
         --lr-schedule constant \
+        --embedding-init default \
         --run-name repro_v2
 done
 ```
@@ -313,6 +321,7 @@ for split in random length add_jump; do
         --patience 10 \
         --norm-first \
         --lr-schedule constant \
+        --embedding-init default \
         --run-name repro_v3_preln
 done
 ```
@@ -340,6 +349,7 @@ CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/train_transformer.py \
     --patience 10 \
     --norm-first \
     --lr-schedule warmup_cosine \
+    --embedding-init default \
     --run-name repro_v4_warmup
 ```
 
@@ -351,6 +361,55 @@ CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/evaluate_transformer.py \
     --run-name repro_v4_warmup
 ```
 
+### V5 — Pre-LN with scaled-normal embedding initialization
+
+V5 uses the same architecture and training settings as V3, except that the input and output embedding tables are initialized with a normal distribution having standard deviation `1/sqrt(model_dim)`.
+
+The original experiment run name was `v5_embfix`. The reproduction commands below use `repro_v5_embfix` to avoid overwriting the original checkpoints and histories.
+
+Train:
+
+```bash
+for split in random length add_jump; do
+    CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/train_transformer.py \
+        --split "$split" \
+        --epochs 50 \
+        --patience 10 \
+        --norm-first \
+        --lr-schedule constant \
+        --embedding-init scaled_normal \
+        --run-name repro_v5_embfix
+done
+```
+
+Evaluate:
+
+```bash
+for split in random length add_jump; do
+    CUDA_VISIBLE_DEVICES=2 ./.conda-env/bin/python -s src/evaluate_transformer.py \
+        --split "$split" \
+        --run-name repro_v5_embfix
+done
+```
+
+The original V5 checkpoints were saved as:
+
+```text
+checkpoints/transformer_v5_embfix_random_best.pt
+checkpoints/transformer_v5_embfix_length_best.pt
+checkpoints/transformer_v5_embfix_add_jump_best.pt
+```
+
+The original V5 training histories are committed to the repository:
+
+```text
+results/training_histories/transformer_v5_embfix_random.csv
+results/training_histories/transformer_v5_embfix_length.csv
+results/training_histories/transformer_v5_embfix_add_jump.csv
+```
+
+### Transformer checkpoint and history naming
+
 Transformer training produces:
 
 ```text
@@ -358,9 +417,9 @@ checkpoints/transformer_<run-name>_<split>_best.pt
 results/training_histories/transformer_<run-name>_<split>.csv
 ```
 
-Checkpoints include model weights, vocabularies, architecture settings, and experiment metadata.
+Checkpoints include model weights, vocabularies, architecture settings, and experiment metadata. New checkpoints also record the embedding-initialization mode, allowing evaluation to report the correct configuration. Older checkpoints without this metadata are treated as using the default embedding initialization.
 
-The original v2–v4 training histories are included in the repository. The corresponding model checkpoints remain on Gorina4 and are not committed to Git. The training commands allow the experiments to be repeated, although numerical results may vary.
+The original V2–V5 training histories are included in the repository. The corresponding model checkpoints remain on Gorina4 and are not committed to Git. The training commands allow the experiments to be repeated, although numerical results may vary.
 
 ## 7. Evaluation procedure
 
@@ -392,6 +451,17 @@ Official SCAN test-set exact-match accuracy:
 | Transformer V2 | 10.52% | 0.31% | 0.00% |
 | Transformer V3 | 29.51% | 0.84% | 0.01% |
 | Transformer V4 | 14.25% | Not evaluated | Not evaluated |
+| Transformer V5 | **99.90%** | **0.00%** | **1.67%** |
+
+V5 official test counts and best validation checkpoints:
+
+| Split | Correct / Total | Best epoch | Best validation loss | Missing EOS |
+|---|---:|---:|---:|---:|
+| Random | 4,178 / 4,182 | 49 | 0.000404 | 0 |
+| Length | 0 / 3,920 | 49 | 0.000462 | 0 |
+| Add primitive (`jump`) | 129 / 7,706 | 47 | 0.000955 | 0 |
+
+All three V5 runs completed 50 epochs with constant learning rate 0.0005 and Pre-LN. Early stopping did not activate.
 
 Official test-set sizes:
 
@@ -400,6 +470,18 @@ Official test-set sizes:
 | Random | 4,182 |
 | Length | 3,920 |
 | Add primitive (`jump`) | 7,706 |
+
+### Main findings
+
+The V5 embedding initialization substantially improved Transformer random-split performance, from 29.51% for V3 to 99.90% for V5. This indicates that embedding initialization was an important factor in optimization under the chosen implementation.
+
+However, the same V5 model configuration obtained 0.00% on the length split. Although its best teacher-forced validation loss was only 0.000462, it did not correctly translate any of the 3,920 official length-test commands.
+
+On add-jump, V5 improved over V3 from 0.01% to 1.67%, but still failed on the vast majority of unseen compositions involving `jump`.
+
+These results illustrate the distinction between learning the training distribution and systematic generalization to a controlled distribution shift. Near-perfect random-split accuracy does not imply successful length extrapolation or primitive recombination.
+
+The LSTM achieved higher length-split accuracy than V5 (12.30% versus 0.00%), whereas V5 achieved higher random and add-jump accuracy. Because the models differ in architecture, capacity, and training duration, these results do not establish general architectural superiority.
 
 Detailed results, best validation epochs, validation losses, and error examples are recorded in:
 
@@ -420,9 +502,12 @@ Interpretation and discussion of the results are provided in the accompanying pr
 - Final accuracy is calculated using autoregressive greedy decoding.
 - The evaluation requires the correct complete action sequence, including `<EOS>`.
 - Transformer experiments use separate run names to preserve results.
+- V5 uses an explicit initialization option; the default preserves the original V1–V4 initialization behavior.
 - The LSTM and Transformer differ in model capacity and training budget.
 - Each reported experiment uses one random seed.
 - Results may vary slightly due to hardware, software versions, and nondeterministic operations.
+- Official test results were inspected during exploratory Transformer development, so the comparisons are not equivalent to evaluation on a completely untouched test set.
+- V3 and V5 differ in embedding initialization, but this change can also alter subsequent random-number consumption and the resulting optimization trajectory. The experiments do not isolate every mechanism behind the performance difference.
 
 The README provides commands for repeating the experimental configurations. The report discusses the methodological limitations and interpretation of the results.
 
